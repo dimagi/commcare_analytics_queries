@@ -183,10 +183,12 @@ FROM (
             ep1,
 
             -- If a user has ever been flagged as a demo user, we want to keep that flag across all events
-            MAX(IF(up.key = 'is_personal_id_demo_user' AND up.value.string_value = 'true', 1, 0)) OVER (PARTITION BY user_pseudo_id) AS is_demo_user
+            MAX(IF(
+              (SELECT value.string_value FROM UNNEST(t.user_properties) WHERE key = 'is_personal_id_demo_user') = 'true',
+              1, 0
+            )) OVER (PARTITION BY user_pseudo_id) AS is_demo_user
 
           FROM `commcare-a57e4.analytics_153906101.events_intraday_*` as t
-          LEFT JOIN UNNEST(t.user_properties) AS up
           LEFT JOIN UNNEST(t.event_params) as ep1
           WHERE
             (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY))

@@ -1,6 +1,9 @@
 --Approach: Flag desired points, then combine for each user, then combine flag combinations and count users
 --Session-based, and grouped by simplified outcome state
 
+-- Size of each time window in days (recent window and older window will both use this size)
+DECLARE window_days INT64 DEFAULT 30;
+
 --Outermost query is to combine outcomes and count users/sessions
 SELECT
   outcome,
@@ -172,7 +175,7 @@ FROM (
           END as outcome,
           
           --Distinguish between the recent window and older window
-          CASE WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), timestamp_micros(event_timestamp), DAY) < 31 THEN 1 ELSE 0 END AS recent_data,
+          CASE WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), timestamp_micros(event_timestamp), DAY) < window_days + 1 THEN 1 ELSE 0 END AS recent_data,
 
           is_demo_user
         FROM (
@@ -191,11 +194,11 @@ FROM (
           FROM `commcare-a57e4.analytics_153906101.events_intraday_*` as t
           LEFT JOIN UNNEST(t.event_params) as ep1
           WHERE
-            (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY))
+            (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL window_days DAY))
                               AND FORMAT_DATE('%Y%m%d', CURRENT_DATE()))
           OR
-            (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY))
-                              AND FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY)))
+            (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL (2 * window_days) DAY))
+                              AND FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL (window_days + 1) DAY)))
         )
         GROUP BY user_pseudo_id, event_name, event_timestamp, is_demo_user
       )

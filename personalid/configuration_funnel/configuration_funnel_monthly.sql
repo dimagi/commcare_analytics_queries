@@ -164,7 +164,8 @@ FROM (
             ELSE MAX(IF(ep1.key='reason', ep1.value.string_value, ""))
           END as outcome,
           
-          is_demo_user
+          is_demo_user,
+          is_dimagi_user
         FROM (
           SELECT
             t.user_pseudo_id,
@@ -173,11 +174,23 @@ FROM (
             ep1,
 
             -- If a user has ever been flagged as a demo user, we want to keep that flag across all events
-            MAX(IF(up.key = 'is_personal_id_demo_user' AND up.value.string_value = 'true', 1, 0)) OVER (PARTITION BY user_pseudo_id) AS is_demo_user
+            MAX(IF(
+              (SELECT value.string_value FROM UNNEST(t.user_properties) WHERE key = 'is_personal_id_demo_user') = 'true',
+              1, 0
+            )) OVER (PARTITION BY user_pseudo_id) AS is_demo_user,
+
+            -- Exclude Dimagi users by checking if device_id maps to a known Dimagi phone
+            MAX(IF(dimagi_devices.device_id IS NOT NULL, 1, 0)) OVER (PARTITION BY user_pseudo_id) AS is_dimagi_user
 
           FROM `commcare-a57e4.analytics_153906101.events_intraday_*` as t
-          LEFT JOIN UNNEST(t.user_properties) AS up
           LEFT JOIN UNNEST(t.event_params) as ep1
+          LEFT JOIN UNNEST(t.user_properties) AS up_device ON up_device.key = 'device_id'
+          LEFT JOIN (
+            SELECT DISTINCT s.device_id
+            FROM `commcare-a57e4.analytics_153906101.personalid_config_sessions` s
+            INNER JOIN `commcare-a57e4.analytics_153906101.dimagi_phones` d ON LTRIM(s.phone_number, '+') = d.phone
+          ) AS dimagi_devices
+            ON dimagi_devices.device_id = CONCAT('commcare_', up_device.value.string_value)
           WHERE
             _TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH))
                               AND FORMAT_DATE('%Y%m%d', DATE_SUB(DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 1 DAY))
@@ -189,7 +202,7 @@ FROM (
           --   (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)) --60
           --                     AND FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL 31 DAY))) --31
         )
-        GROUP BY user_pseudo_id, event_name, event_timestamp, is_demo_user
+        GROUP BY user_pseudo_id, event_name, event_timestamp, is_demo_user, is_dimagi_user
       )
       WHERE
         ((event_name = "screen_view" AND CONTAINS_SUBSTR(screen_name, "PersonalId") AND NOT CONTAINS_SUBSTR(screen_name, "Activity"))
@@ -199,6 +212,9 @@ FROM (
 
         -- Exlude any user that has ever been flagged as a demo user
         AND is_demo_user = 0
+
+        -- Exclude Dimagi users
+        AND is_dimagi_user = 0
     ) 
     GROUP BY user_pseudo_id, ga_session_id
   )

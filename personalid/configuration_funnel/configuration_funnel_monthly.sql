@@ -184,13 +184,12 @@ FROM (
 
           FROM `commcare-a57e4.analytics_153906101.events_intraday_*` as t
           LEFT JOIN UNNEST(t.event_params) as ep1
-          LEFT JOIN UNNEST(t.user_properties) AS up_device ON up_device.key = 'device_id'
           LEFT JOIN (
             SELECT DISTINCT s.device_id
             FROM `commcare-a57e4.analytics_153906101.personalid_config_sessions` s
             INNER JOIN `commcare-a57e4.analytics_153906101.dimagi_phones` d ON LTRIM(s.phone_number, '+') = d.phone
           ) AS dimagi_devices
-            ON dimagi_devices.device_id = CONCAT('commcare_', up_device.value.string_value)
+            ON dimagi_devices.device_id = CONCAT('commcare_', (SELECT value.string_value FROM UNNEST(t.user_properties) WHERE key = 'device_id'))
           WHERE
             _TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH))
                               AND FORMAT_DATE('%Y%m%d', DATE_SUB(DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 1 DAY))

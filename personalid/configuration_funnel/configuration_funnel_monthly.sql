@@ -194,6 +194,7 @@ FROM (
           WHERE
             _TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH))
                               AND FORMAT_DATE('%Y%m%d', DATE_SUB(DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 1 DAY))
+            AND t.event_name IN ('screen_view', 'personal_id_configuration_failure', 'personalid_account_created', 'personalid_account_recovered')
 
           --  _TABLE_SUFFIX BETWEEN '20250601' AND '20250630'
           --   (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH))

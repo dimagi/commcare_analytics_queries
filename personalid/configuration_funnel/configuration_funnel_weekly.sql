@@ -4,6 +4,37 @@
 -- Size of each time window in days (recent window and older window will both use this size)
 DECLARE window_days INT64 DEFAULT 30;
 
+WITH
+-- Identify Dimagi users by checking if device_id maps to a known Dimagi phone
+dimagi_users AS (
+  SELECT DISTINCT user_pseudo_id
+  FROM `commcare-a57e4.analytics_153906101.events_intraday_*` t
+  INNER JOIN (
+    SELECT DISTINCT s.device_id
+    FROM `commcare-a57e4.analytics_153906101.personalid_config_sessions` s
+    INNER JOIN `commcare-a57e4.analytics_153906101.dimagi_phones` d ON LTRIM(s.phone_number, '+') = d.phone
+  ) AS dimagi_devices
+    ON dimagi_devices.device_id = CONCAT('commcare_', (SELECT value.string_value FROM UNNEST(t.user_properties) WHERE key = 'device_id'))
+  WHERE
+    (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL window_days DAY))
+                        AND FORMAT_DATE('%Y%m%d', CURRENT_DATE()))
+  OR
+    (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL (2 * window_days) DAY))
+                        AND FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL (window_days + 1) DAY)))
+),
+-- Identify users that have ever been flagged as a demo user
+demo_users AS (
+  SELECT DISTINCT user_pseudo_id
+  FROM `commcare-a57e4.analytics_153906101.events_intraday_*`
+  WHERE
+    ((_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL window_days DAY))
+                        AND FORMAT_DATE('%Y%m%d', CURRENT_DATE()))
+    OR
+    (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL (2 * window_days) DAY))
+                        AND FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL (window_days + 1) DAY))))
+    AND (SELECT value.string_value FROM UNNEST(user_properties) WHERE key = 'is_personal_id_demo_user') = 'true'
+)
+
 --Outermost query is to combine outcomes and count users/sessions
 SELECT
   outcome,
@@ -175,43 +206,17 @@ FROM (
           END as outcome,
           
           --Distinguish between the recent window and older window
-          CASE WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), timestamp_micros(event_timestamp), DAY) < window_days + 1 THEN 1 ELSE 0 END AS recent_data,
+          CASE WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), timestamp_micros(event_timestamp), DAY) < window_days + 1 THEN 1 ELSE 0 END AS recent_data
 
-          is_demo_user,
-          is_dimagi_user
-        FROM (
-          SELECT
-            t.user_pseudo_id,
-            t.event_name,
-            t.event_timestamp,
-            ep1,
-
-            -- If a user has ever been flagged as a demo user, we want to keep that flag across all events
-            MAX(IF(
-              (SELECT value.string_value FROM UNNEST(t.user_properties) WHERE key = 'is_personal_id_demo_user') = 'true',
-              1, 0
-            )) OVER (PARTITION BY user_pseudo_id) AS is_demo_user,
-
-            -- Exclude Dimagi users by checking if device_id maps to a known Dimagi phone
-            MAX(IF(dimagi_devices.device_id IS NOT NULL, 1, 0)) OVER (PARTITION BY user_pseudo_id) AS is_dimagi_user
-
-          FROM `commcare-a57e4.analytics_153906101.events_intraday_*` as t
-          LEFT JOIN UNNEST(t.event_params) as ep1
-          LEFT JOIN UNNEST(t.user_properties) AS up_device ON up_device.key = 'device_id'
-          LEFT JOIN (
-            SELECT DISTINCT s.device_id
-            FROM `commcare-a57e4.analytics_153906101.personalid_config_sessions` s
-            INNER JOIN `commcare-a57e4.analytics_153906101.dimagi_phones` d ON LTRIM(s.phone_number, '+') = d.phone
-          ) AS dimagi_devices
-            ON dimagi_devices.device_id = CONCAT('commcare_', up_device.value.string_value)
-          WHERE
-            (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL window_days DAY))
-                              AND FORMAT_DATE('%Y%m%d', CURRENT_DATE()))
-          OR
-            (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL (2 * window_days) DAY))
-                              AND FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL (window_days + 1) DAY)))
-        )
-        GROUP BY user_pseudo_id, event_name, event_timestamp, is_demo_user, is_dimagi_user
+        FROM `commcare-a57e4.analytics_153906101.events_intraday_*` as t
+        LEFT JOIN UNNEST(t.event_params) as ep1
+        WHERE
+          (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL window_days DAY))
+                            AND FORMAT_DATE('%Y%m%d', CURRENT_DATE()))
+        OR
+          (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL (2 * window_days) DAY))
+                            AND FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL (window_days + 1) DAY)))
+        GROUP BY user_pseudo_id, event_name, event_timestamp
       )
       WHERE
         ((event_name = "screen_view" AND CONTAINS_SUBSTR(screen_name, "PersonalId") AND NOT CONTAINS_SUBSTR(screen_name, "Activity"))
@@ -219,11 +224,11 @@ FROM (
         OR event_name="personalid_account_created"
         OR event_name="personalid_account_recovered")
 
-        -- Exlude any user that has ever been flagged as a demo user
-        AND is_demo_user = 0
+        -- Exclude any user that has ever been flagged as a demo user
+        AND user_pseudo_id NOT IN (SELECT user_pseudo_id FROM demo_users)
 
         -- Exclude Dimagi users
-        AND is_dimagi_user = 0
+        AND user_pseudo_id NOT IN (SELECT user_pseudo_id FROM dimagi_users)
     ) 
     GROUP BY user_pseudo_id, recent_data, ga_session_id
   )

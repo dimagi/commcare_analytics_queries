@@ -24,19 +24,19 @@ demo_users AS (
     AND (SELECT value.string_value FROM UNNEST(user_properties) WHERE key = 'is_personal_id_demo_user') = 'true'
 ),
 summarized_data AS (
---Outermost query is to combine outcomes and count users/sessions
 SELECT
   outcome,
-  SUM(users) AS users,
-  SUM(sessions) AS sessions,
+  COUNT(DISTINCT(user_pseudo_id)) AS users,
+  COUNT(ga_session_id) AS sessions,
   MIN(min_date) as min_date,
   MAX(max_date) as max_date
 FROM (
-  --This query is the session-based funnel, identifying pathways for each usage session
+  --Compute the outcome for each session
   SELECT
-    final_state,
-    MIN(min_date) as min_date,
-    MAX(max_date) as max_date,
+    user_pseudo_id,
+    ga_session_id,
+    min_date,
+    max_date,
     CASE
       WHEN final_state = "Created" THEN "Created"
       WHEN final_state = "Locked" THEN "Locked"
@@ -59,41 +59,7 @@ FROM (
         OR play_services_9 = 1
       ) THEN "Phone Error"
       WHEN phone_page = 1 THEN "Phone"
-    ELSE "" END AS outcome,
-
-    CASE WHEN
-      start_configuration_integrity_device_failure > 0
-      OR play_services_2 > 0
-      OR play_services_9 > 0
-      OR biometric_enrollment_failed > 0
-      OR min_biometric_hardware_absent > 0
-      OR min_biometric_hardware_unavailable > 0
-      OR min_biometric_needs_update > 0
-    THEN 1 ELSE 0 END AS had_errors,
-    
-    COUNT(DISTINCT(user_pseudo_id)) AS users,
-    COUNT(ga_session_id) AS sessions,
-    phone_page,
-    start_configuration_integrity_device_failure,
-    play_services_2,
-    play_services_9,
-    biometric_page,
-    biometric_enrollment_failed,
-    min_biometric_hardware_absent,
-    min_biometric_hardware_unavailable,
-    min_biometric_needs_update,
-    otp_page,
-    start_configuration_locked_account_failure,
-    name_page,
-    backup_code_page,
-    incorrect_backup_codes,
-    recovered,
-    photo_page,
-    created,
-    CASE WHEN COUNT(user_pseudo_id) = 1 THEN MAX(last_created) ELSE NULL END as last_created,
-    CASE WHEN COUNT(user_pseudo_id) = 1 THEN MAX(last_recovered) ELSE NULL END as last_recovered,
-    CASE WHEN COUNT(user_pseudo_id) = 1 THEN MAX(last_lockout) ELSE NULL END as last_lockout,
-    CASE WHEN COUNT(user_pseudo_id) = 1 THEN MAX(last_wrong_backup_code) ELSE NULL END as last_wrong_backup_code
+    ELSE "" END AS outcome
   FROM
   (
     --Results here are a list of sessions (for a user, older vs recent)
@@ -209,45 +175,6 @@ FROM (
     ) 
     GROUP BY user_pseudo_id, ga_session_id
   )
-  GROUP BY
-    phone_page,
-    start_configuration_integrity_device_failure,
-    play_services_2,
-    play_services_9,
-    biometric_page,
-    biometric_enrollment_failed,
-    min_biometric_hardware_absent,
-    min_biometric_hardware_unavailable,
-    min_biometric_needs_update,
-    otp_page,
-    name_page,
-    backup_code_page,
-    start_configuration_locked_account_failure,
-    incorrect_backup_codes,
-    recovered,
-    photo_page,
-    created,
-    final_state
-  ORDER BY 
-    final_state,
-    phone_page,
-    biometric_page,
-    otp_page,
-    name_page,
-    backup_code_page,
-    photo_page,
-    recovered,
-    incorrect_backup_codes,
-    created,
-    start_configuration_integrity_device_failure,
-    play_services_2,
-    play_services_9,
-    biometric_enrollment_failed,
-    min_biometric_hardware_absent,
-    min_biometric_hardware_unavailable,
-    min_biometric_needs_update,
-    start_configuration_locked_account_failure,
-    final_state
 )
 GROUP BY outcome
 ORDER BY outcome

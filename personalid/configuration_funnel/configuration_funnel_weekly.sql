@@ -1,3 +1,5 @@
+--BigQuery query name: PersonalID Funnel: Weekly Report
+
 --Approach: Flag desired points, then combine for each user, then combine flag combinations and count users
 --Session-based, and grouped by simplified outcome state
 

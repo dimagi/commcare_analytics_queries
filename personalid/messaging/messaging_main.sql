@@ -32,6 +32,9 @@ overall_users AS (
       AND (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'cchq_domain') NOT LIKE '%qa%commcarehq.org'
       AND (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'cchq_domain') NOT LIKE '%test%commcarehq.org'
       AND (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'server') NOT LIKE 'staging.commcarehq.org'
+      -- Restrict to the production 'commcare' flavor; excludes cccStaging, lts,
+      -- and standalone builds (which share the same Firebase project / applicationId).
+      AND (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'app_flavor') = 'commcare'
       AND user_pseudo_id NOT IN (SELECT user_pseudo_id FROM dimagi_users)
   )
   GROUP BY event_month
@@ -50,6 +53,9 @@ messaging_users AS (
     AND (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'cchq_domain') NOT LIKE '%qa%commcarehq.org'
     AND (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'cchq_domain') NOT LIKE '%test%commcarehq.org'
     AND (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'server') NOT LIKE 'staging.commcarehq.org'
+    -- Restrict to the production 'commcare' flavor; excludes cccStaging, lts,
+    -- and standalone builds (which share the same Firebase project / applicationId).
+    AND (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'app_flavor') = 'commcare'
     AND user_pseudo_id NOT IN (SELECT user_pseudo_id FROM dimagi_users)
   GROUP BY event_month
 ),
@@ -77,6 +83,9 @@ notification_actions AS (
     AND (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'cchq_domain') NOT LIKE '%qa%commcarehq.org'
     AND (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'cchq_domain') NOT LIKE '%test%commcarehq.org'
     AND (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'server') NOT LIKE 'staging.commcarehq.org'
+    -- Restrict to the production 'commcare' flavor; excludes cccStaging, lts,
+    -- and standalone builds (which share the same Firebase project / applicationId).
+    AND (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'app_flavor') = 'commcare'
     AND user_pseudo_id NOT IN (SELECT user_pseudo_id FROM dimagi_users)
   GROUP BY event_month
 )

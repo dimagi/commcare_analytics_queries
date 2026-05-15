@@ -38,4 +38,7 @@ AND (SELECT ep_inner_1.value.string_value FROM UNNEST(event_params) as ep_inner_
 AND (SELECT up_inner.value.string_value FROM UNNEST(user_properties) as up_inner WHERE up_inner.key='cchq_domain') NOT LIKE '%qa%commcarehq.org'
 AND (SELECT up_inner.value.string_value FROM UNNEST(user_properties) as up_inner WHERE up_inner.key='cchq_domain') NOT LIKE '%test%commcarehq.org'
 AND (SELECT up_inner.value.string_value FROM UNNEST(user_properties) as up_inner WHERE up_inner.key='server')  not like 'staging.commcarehq.org'
+-- Restrict to the production 'commcare' flavor; excludes cccStaging, lts,
+-- and standalone builds (which share the same Firebase project / applicationId).
+AND (SELECT up_inner.value.string_value FROM UNNEST(user_properties) as up_inner WHERE up_inner.key='app_flavor') = 'commcare'
 AND user_pseudo_id NOT IN (SELECT user_pseudo_id FROM dimagi_users)

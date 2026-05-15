@@ -160,6 +160,9 @@ FROM (
           _TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH))
                             AND FORMAT_DATE('%Y%m%d', DATE_SUB(DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 1 DAY))
           AND t.event_name IN ('screen_view', 'personal_id_configuration_failure', 'personalid_account_created', 'personalid_account_recovered')
+          -- Restrict to the production 'commcare' flavor; excludes cccStaging, lts,
+          -- and standalone builds (which share the same Firebase project / applicationId).
+          AND (SELECT value.string_value FROM UNNEST(t.user_properties) WHERE key = 'app_flavor') = 'commcare'
 
         GROUP BY user_pseudo_id, event_name, event_timestamp
       )

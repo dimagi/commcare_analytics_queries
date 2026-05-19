@@ -213,11 +213,14 @@ FROM (
         FROM `commcare-a57e4.analytics_153906101.events_intraday_*` as t
         LEFT JOIN UNNEST(t.event_params) as ep1
         WHERE
-          (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL window_days DAY))
+          ((_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL window_days DAY))
                             AND FORMAT_DATE('%Y%m%d', CURRENT_DATE()))
         OR
           (_TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL (2 * window_days) DAY))
-                            AND FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL (window_days + 1) DAY)))
+                            AND FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL (window_days + 1) DAY))))
+          -- Restrict to the production 'commcare' flavor; excludes cccStaging, lts,
+          -- and standalone builds (which share the same Firebase project / applicationId).
+          AND (SELECT value.string_value FROM UNNEST(t.user_properties) WHERE key = 'app_flavor') = 'commcare'
         GROUP BY user_pseudo_id, event_name, event_timestamp
       )
       WHERE

@@ -4,10 +4,17 @@ Numbers behind the crash-free and ANR-free user metrics that are currently kept 
 hand in the **CommCare Mobile Metrics** spreadsheet (scraped from the Firebase
 Crashlytics console), broken down by Connect and non-Connect users.
 
-`crash_usage_metrics.sql` is the measurement-only version: it emits the numbers so
-they can be compared against the console, but writes nothing. Once the numbers look
-right it becomes the `SELECT` feeding an `INSERT` into the history table described
-below.
+## Files
+
+| File | What it is |
+|---|---|
+| `crash_usage_metrics.sql` | measurement only - emits the numbers, writes nothing. Use it to eyeball a window or compare against the console. |
+| `crash_usage_history_table.sql` | one-off DDL for the history table. Already run. |
+| `crash_usage_history_insert.sql` | the scheduled query - same body, wrapped in a guarded insert. |
+
+The two query files share a body that is duplicated rather than shared, because each
+one has to stand alone as a BigQuery saved query. **Changes to the measurement query
+need copying into the insert query**, and the insert is the one that matters.
 
 ## Output
 
@@ -120,16 +127,30 @@ shares the `org.commcare.dalvik` applicationId but is negligible (~14 users/day)
 worth knowing before putting it on a faster schedule. Dropping the Connect breakdown
 would take it back to ~65 GB.
 
-## Proposed history table
+## History table
 
 ```
 commcare-a57e4.mobile_metrics.crash_usage_history
 ```
 
-Same columns as the query output, partitioned by `run_date` and clustered by
+Created in the `US` region to match the Crashlytics and GA4 exports. Same columns as
+the query output plus `inserted_at`, partitioned by `run_date` and clustered by
 `app, error_type`. Long format rather than one wide row per run (as the spreadsheet
 does) so new segments or windows are extra rows, not schema changes.
 
-The insert step should be guarded so that a re-run on the same day replaces rather than
-duplicates that day's rows - either `DELETE` the `run_date` first, or use `MERGE` on
-`(run_date, app, id_basis, user_segment, window_days, error_type)`.
+28 rows per run: 20 for the `commcare` device basis (4 segments plus `all`, across two
+windows and two event types), 4 for the `commcare` installation basis, 4 for `lts`.
+
+`crash_usage_history_insert.sql` wraps the delete and the insert in one transaction and
+clears `run_date = CURRENT_DATE()` first, so running it twice in a day replaces that
+day's rows instead of duplicating them. Verified against a scratch copy: a second run
+leaves 28 rows, not 56.
+
+First run inserted `2026-09-21`.
+
+### Scheduling
+
+Not scheduled yet. Monthly fits both the intended use and the cost. Note that the
+window is anchored on the run date, not on calendar month boundaries - each row records
+its own `window_start` / `window_end`, so an irregular run just shifts the window rather
+than corrupting the series.

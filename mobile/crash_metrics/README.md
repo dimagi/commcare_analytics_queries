@@ -9,6 +9,7 @@ Crashlytics console), broken down by Connect and non-Connect users.
 | File | What it is |
 |---|---|
 | `crash_usage_metrics.sql` | measurement only - emits the numbers, writes nothing. Use it to eyeball a window or compare against the console. |
+| `crash_usage_totals.sql` | helper: the pre-version view, one row per app x segment x window x event type. |
 | `crash_usage_history_table.sql` | DDL for the history table. Safe to re-run: `CREATE TABLE IF NOT EXISTS`. |
 | `crash_usage_history_insert.sql` | the scheduled query - same body, wrapped in a guarded insert. |
 

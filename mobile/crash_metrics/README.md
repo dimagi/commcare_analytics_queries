@@ -10,6 +10,8 @@ Crashlytics console), broken down by Connect and non-Connect users.
 |---|---|
 | `crash_usage_metrics.sql` | measurement only - emits the numbers, writes nothing. Use it to eyeball a window or compare against the console. |
 | `crash_usage_totals.sql` | helper: the pre-version view, one row per app x segment x window x event type. |
+| `ga_device_day_table.sql` | DDL for the GA4 daily rollup. Safe to re-run. |
+| `ga_device_day_insert.sql` | refreshes the rollup. **Must run before the metrics insert.** |
 | `crash_usage_history_table.sql` | DDL for the history table. Safe to re-run: `CREATE TABLE IF NOT EXISTS`. |
 | `crash_usage_history_insert.sql` | the scheduled query - same body, wrapped in a guarded insert. |
 
@@ -92,6 +94,30 @@ crashing* unmatched devices exist. The effect is to push `non-connect` (and `all
 `free_users_pct` down by roughly 0.4pp. Small, but it is a floor on how precise these
 percentages can be, and it is worth watching if the unmatched share ever grows.
 
+## The GA4 rollup
+
+`mobile_metrics.ga_device_day` is a daily rollup of the GA4 export for
+`org.commcare.dalvik`: one row per day x app instance x device x version, carrying
+`is_connect`. The metrics queries read it instead of the raw export.
+
+It exists for cost. Reading `user_properties` across 90 days of GA4 was 0.40 TiB on
+every run, and 89 of those 90 days had not changed since the previous run. The rollup
+reads each day once. It also outlives the exports, which is the other half of the
+problem the history table was built for - GA4 shards are dropped at 180 days by
+`daily_expired_cleanup.sql`, Crashlytics at 92.
+
+`ga_device_day_insert.sql` is incremental and self-healing: it reprocesses the last
+`refresh_days` (3) in case events landed late, fills whatever gap a missed run left, and
+backfills the full 90 days into an empty table. It is idempotent - the delete and the
+insert share one transaction - so re-running it is always safe.
+
+**Run it before the metrics insert.** `crash_usage_history_insert.sql` opens with an
+`ASSERT` that the rollup reaches `window_end` and fails with
+`ga_device_day rollup is behind window_end` rather than writing history off stale data.
+
+The rollup is about 0.35 GB for 90 days, roughly 1.4 GB a year, so storage is around a
+cent a month.
+
 ## Sources
 
 | Metric | Table |
@@ -157,9 +183,21 @@ shares the `org.commcare.dalvik` applicationId but is negligible (~14 users/day)
 
 ## Cost
 
-~444 GB per run, nearly all of it reading GA4 `user_properties` over 90 days for the
-`device_id` and `ccc_enabled` lookups. Roughly $2.20 at on-demand pricing. Adding the
-version breakdown cost about 3% more, since `app_info.version` is a small column. Fine monthly;
+Measured at the on-demand rate of $6.25/TiB, with no reservation on the project.
+
+| | per run | per year, weekly |
+|---|---|---|
+| before the rollup | 0.40 TiB, $2.52 | $131 |
+| rollup refresh + metrics | 64 GiB, $0.39 | $20 |
+
+The metrics query itself is now 1.4 GiB ($0.01); essentially all of the remaining cost is
+the rollup refresh reading new GA4 day-shards at about 5.3 GiB each.
+
+Two things worth knowing if the numbers are ever retuned. A weekly rollup is cheaper than
+a daily one, because each run pays a fixed overlap - `refresh_days` plus a day of
+`_TABLE_SUFFIX` slack either side - and running seven times a week pays it seven times.
+And earlier versions of this file quoted $5/TB, which is not the rate; $6.25/TiB is, so
+the pre-rollup figures were understated by about 25%. Fine monthly;
 worth knowing before putting it on a faster schedule. Dropping the Connect breakdown
 would take it back to ~65 GB.
 

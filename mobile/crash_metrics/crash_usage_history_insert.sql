@@ -5,6 +5,11 @@ DECLARE window_end DATE DEFAULT DATE_SUB(CURRENT_DATE(), INTERVAL data_lag_days 
 DECLARE max_window_days INT64 DEFAULT 90;
 DECLARE earliest_date DATE DEFAULT DATE_SUB(window_end, INTERVAL max_window_days - 1 DAY);
 
+-- Fail loudly rather than writing history off a stale rollup.
+ASSERT (
+  SELECT MAX(event_date) FROM `commcare-a57e4.mobile_metrics.ga_device_day`
+) >= window_end AS 'ga_device_day rollup is behind window_end; run ga_device_day_insert.sql first';
+
 BEGIN TRANSACTION;
 
 DELETE FROM `commcare-a57e4.mobile_metrics.crash_usage_history`
@@ -67,19 +72,12 @@ crash_events AS (
     AND error_type IN ('FATAL', 'ANR')
 ),
 
--- _TABLE_SUFFIX prunes shards; the event timestamp decides the day, so that this
--- lines up with DATE(event_timestamp) on the Crashlytics side.
+-- Reads the daily rollup rather than the GA4 export, which is what keeps this
+-- query off a 90 day scan of user_properties. Run ga_device_day_insert.sql first.
 ga_events AS (
-  SELECT
-    DATE(TIMESTAMP_MICROS(event_timestamp)) AS event_date,
-    user_pseudo_id,
-    CONCAT('commcare_', (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'device_id')) AS device_id,
-    (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'ccc_enabled') = 'true' AS is_connect,
-    IFNULL(app_info.version, 'unknown') AS app_version
-  FROM `commcare-a57e4.analytics_153906101.events_intraday_*`
-  WHERE _TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(earliest_date, INTERVAL 1 DAY))
-                          AND FORMAT_DATE('%Y%m%d', DATE_ADD(window_end, INTERVAL 1 DAY))
-    AND app_info.id = 'org.commcare.dalvik'
+  SELECT event_date, user_pseudo_id, device_id, is_connect, app_version
+  FROM `commcare-a57e4.mobile_metrics.ga_device_day`
+  WHERE event_date BETWEEN earliest_date AND window_end
 ),
 
 -- Segment is a property of the device across the whole window, so it is worked

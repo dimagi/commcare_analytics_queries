@@ -9,8 +9,7 @@ Crashlytics console), broken down by Connect and non-Connect users.
 | File | What it is |
 |---|---|
 | `crash_usage_metrics.sql` | measurement only - emits the numbers, writes nothing. Use it to eyeball a window or compare against the console. |
-| `crash_usage_history_table.sql` | DDL for the history table, kept at the current end state. Already run. |
-| `crash_usage_history_alter_20260922.sql` | one-off migration folding the segments down to two. Already run. |
+| `crash_usage_history_table.sql` | DDL for the history table. Safe to re-run: `CREATE TABLE IF NOT EXISTS`. |
 | `crash_usage_history_insert.sql` | the scheduled query - same body, wrapped in a guarded insert. |
 
 The two query files share a body that is duplicated rather than shared, because each
@@ -169,9 +168,12 @@ would take it back to ~65 GB.
 commcare-a57e4.mobile_metrics.crash_usage_history
 ```
 
-Created in the `US` region to match the Crashlytics and GA4 exports. Same columns as
+Created in the `US` region to match the Crashlytics and GA4 exports - not in
+`firebase_crashlytics`, whose dataset defaults would have given a new table a 60 day
+table and partition expiration and quietly deleted it, and not in `analytics_153906101`,
+where `daily_expired_cleanup.sql` programmatically drops tables. Same columns as
 the query output plus `inserted_at`, partitioned by `run_date` and clustered by
-`app, error_type`. Long format rather than one wide row per run (as the spreadsheet
+`app, app_version, error_type, user_segment`. Long format rather than one wide row per run (as the spreadsheet
 does) so new segments or windows are extra rows, not schema changes.
 
 Row count per run is roughly 24 x (number of versions seen + 1) - 537 on the first

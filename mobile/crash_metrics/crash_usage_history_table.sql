@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS `commcare-a57e4.mobile_metrics.crash_usage_history`
 (
   run_date       DATE     NOT NULL OPTIONS(description = "Date the populating query ran"),
   app            STRING   NOT NULL OPTIONS(description = "commcare (org.commcare.dalvik) or lts (org.commcare.lts)"),
-  app_version    STRING   OPTIONS(description = "The app version the events occurred on, e.g. 2.63.5, from Crashlytics application.display_version and GA4 app_info.version. 'all' is the rolled-up row across every version. total_events sums exactly from the per-version rows to the 'all' row; affected_users and total_users do NOT, because a user who upgrades mid-window is counted under every version they ran"),
+  app_version    STRING   NOT NULL OPTIONS(description = "The app version the events occurred on, e.g. 2.63.5, from Crashlytics application.display_version and GA4 app_info.version. 'all' is the rolled-up row across every version. total_events sums exactly from the per-version rows to the 'all' row; affected_users and total_users do NOT, because a user who upgrades mid-window is counted under every version they ran"),
   user_segment   STRING   NOT NULL OPTIONS(description = "all-by-device, all-by-installation, connect, connect-demo or non-connect. all-by-device and the three breakdown segments count users by the device_id custom key and reconcile exactly; all-by-installation counts Crashlytics installation_uuid over GA4 user_pseudo_id and is the console-comparable figure, and the only one available for lts"),
   window_days    INT64    NOT NULL OPTIONS(description = "Length of the lookback window, 30 or 90"),
   error_type     STRING   NOT NULL OPTIONS(description = "FATAL (a crash) or ANR"),
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS `commcare-a57e4.mobile_metrics.crash_usage_history`
   inserted_at    TIMESTAMP OPTIONS(description = "When the row was written")
 )
 PARTITION BY run_date
-CLUSTER BY app, error_type
+CLUSTER BY app, app_version, error_type, user_segment
 OPTIONS(
   description = "One row per app x version x segment x window x event type per run. Written by crash_usage_history_insert.sql; see mobile/crash_metrics/README.md in commcare-analytics-queries."
 );

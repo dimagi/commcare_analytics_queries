@@ -157,8 +157,9 @@ shares the `org.commcare.dalvik` applicationId but is negligible (~14 users/day)
 
 ## Cost
 
-~430 GB per run, nearly all of it reading GA4 `user_properties` over 90 days for the
-`device_id` and `ccc_enabled` lookups. Roughly $2.15 at on-demand pricing. Fine monthly;
+~444 GB per run, nearly all of it reading GA4 `user_properties` over 90 days for the
+`device_id` and `ccc_enabled` lookups. Roughly $2.20 at on-demand pricing. Adding the
+version breakdown cost about 3% more, since `app_info.version` is a small column. Fine monthly;
 worth knowing before putting it on a faster schedule. Dropping the Connect breakdown
 would take it back to ~65 GB.
 
@@ -173,13 +174,14 @@ the query output plus `inserted_at`, partitioned by `run_date` and clustered by
 `app, error_type`. Long format rather than one wide row per run (as the spreadsheet
 does) so new segments or windows are extra rows, not schema changes.
 
-24 rows per run: for `commcare`, 4 segments plus `all-by-installation` across two
-windows and two event types (20), and 4 `all-by-installation` rows for `lts`.
+Row count per run is roughly 24 x (number of versions seen + 1) - 537 on the first
+versioned run. The uniqueness key is
+`(run_date, app, app_version, user_segment, window_days, error_type)`.
 
 `crash_usage_history_insert.sql` wraps the delete and the insert in one transaction and
 clears `run_date = CURRENT_DATE()` first, so running it twice in a day replaces that
 day's rows instead of duplicating them. Verified against a scratch copy: a second run
-leaves 24 rows, not 48.
+leaves one set of rows, not two.
 
 First run inserted `2026-09-21`.
 

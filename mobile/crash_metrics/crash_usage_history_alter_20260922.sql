@@ -19,6 +19,13 @@ ALTER TABLE `commcare-a57e4.mobile_metrics.crash_usage_history`
 ALTER TABLE `commcare-a57e4.mobile_metrics.crash_usage_history`
   DROP COLUMN IF EXISTS id_basis;
 
+ALTER TABLE `commcare-a57e4.mobile_metrics.crash_usage_history`
+  ADD COLUMN IF NOT EXISTS app_version STRING
+  OPTIONS(description = "The app version the events occurred on, e.g. 2.63.5, from Crashlytics application.display_version and GA4 app_info.version. 'all' is the rolled-up row across every version. total_events sums exactly from the per-version rows to the 'all' row; affected_users and total_users do NOT, because a user who upgrades mid-window is counted under every version they ran");
+
+ALTER TABLE `commcare-a57e4.mobile_metrics.crash_usage_history`
+  ALTER COLUMN app_version SET OPTIONS(description = "The app version the events occurred on, e.g. 2.63.5, from Crashlytics application.display_version and GA4 app_info.version. 'all' is the rolled-up row across every version. total_events sums exactly from the per-version rows to the 'all' row; affected_users and total_users do NOT, because a user who upgrades mid-window is counted under every version they ran");
+
 -- Note: because unmatched_affected_users was added by ALTER it sits last in the live
 -- table, while crash_usage_history_table.sql lists it next to total_users. Cosmetic
 -- only - the insert names its columns.

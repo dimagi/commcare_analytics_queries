@@ -9,50 +9,6 @@ WITH windows AS (
   SELECT 30 AS window_days UNION ALL SELECT 90
 ),
 
-crash_events AS (
-  SELECT
-    'commcare' AS app,
-    error_type,
-    DATE(event_timestamp) AS event_date,
-    installation_uuid,
-    (SELECT k.value FROM UNNEST(custom_keys) k WHERE k.key = 'device_id') AS device_id
-  FROM `commcare-a57e4.firebase_crashlytics.org_commcare_dalvik_ANDROID`
-  WHERE DATE(event_timestamp) BETWEEN earliest_date AND window_end
-    AND error_type IN ('FATAL', 'ANR')
-
-  UNION ALL
-
-  SELECT
-    'lts' AS app,
-    error_type,
-    DATE(event_timestamp) AS event_date,
-    installation_uuid,
-    (SELECT k.value FROM UNNEST(custom_keys) k WHERE k.key = 'device_id') AS device_id
-  FROM `commcare-a57e4.firebase_crashlytics.org_commcare_lts_ANDROID`
-  WHERE DATE(event_timestamp) BETWEEN earliest_date AND window_end
-    AND error_type IN ('FATAL', 'ANR')
-),
-
--- _TABLE_SUFFIX prunes shards; the event timestamp decides the day, so that this
--- lines up with DATE(event_timestamp) on the Crashlytics side.
-ga_events AS (
-  SELECT
-    DATE(TIMESTAMP_MICROS(event_timestamp)) AS event_date,
-    user_pseudo_id,
-    CONCAT('commcare_', (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'device_id')) AS device_id,
-    (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'ccc_enabled') = 'true' AS is_connect
-  FROM `commcare-a57e4.analytics_153906101.events_intraday_*`
-  WHERE _TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(earliest_date, INTERVAL 1 DAY))
-                          AND FORMAT_DATE('%Y%m%d', DATE_ADD(window_end, INTERVAL 1 DAY))
-    AND app_info.id = 'org.commcare.dalvik'
-),
-
-ga_instance_days AS (
-  SELECT DISTINCT event_date, user_pseudo_id
-  FROM ga_events
-  WHERE event_date BETWEEN earliest_date AND window_end
-),
-
 -- Latest config session per device decides demo status. dimagi_phones holds a
 -- few repeated numbers, so this is a semi-join to avoid fanning out.
 demo_devices AS (
@@ -74,6 +30,49 @@ demo_devices AS (
     )
 ),
 
+crash_events AS (
+  SELECT
+    'commcare' AS app,
+    error_type,
+    DATE(event_timestamp) AS event_date,
+    installation_uuid,
+    (SELECT k.value FROM UNNEST(custom_keys) k WHERE k.key = 'device_id') AS device_id,
+    IFNULL(application.display_version, 'unknown') AS app_version
+  FROM `commcare-a57e4.firebase_crashlytics.org_commcare_dalvik_ANDROID`
+  WHERE DATE(event_timestamp) BETWEEN earliest_date AND window_end
+    AND error_type IN ('FATAL', 'ANR')
+
+  UNION ALL
+
+  SELECT
+    'lts' AS app,
+    error_type,
+    DATE(event_timestamp) AS event_date,
+    installation_uuid,
+    (SELECT k.value FROM UNNEST(custom_keys) k WHERE k.key = 'device_id') AS device_id,
+    IFNULL(application.display_version, 'unknown') AS app_version
+  FROM `commcare-a57e4.firebase_crashlytics.org_commcare_lts_ANDROID`
+  WHERE DATE(event_timestamp) BETWEEN earliest_date AND window_end
+    AND error_type IN ('FATAL', 'ANR')
+),
+
+-- _TABLE_SUFFIX prunes shards; the event timestamp decides the day, so that this
+-- lines up with DATE(event_timestamp) on the Crashlytics side.
+ga_events AS (
+  SELECT
+    DATE(TIMESTAMP_MICROS(event_timestamp)) AS event_date,
+    user_pseudo_id,
+    CONCAT('commcare_', (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'device_id')) AS device_id,
+    (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'ccc_enabled') = 'true' AS is_connect,
+    IFNULL(app_info.version, 'unknown') AS app_version
+  FROM `commcare-a57e4.analytics_153906101.events_intraday_*`
+  WHERE _TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(earliest_date, INTERVAL 1 DAY))
+                          AND FORMAT_DATE('%Y%m%d', DATE_ADD(window_end, INTERVAL 1 DAY))
+    AND app_info.id = 'org.commcare.dalvik'
+),
+
+-- Segment is a property of the device across the whole window, so it is worked
+-- out without reference to version.
 ga_device_days AS (
   SELECT
     event_date,
@@ -102,11 +101,27 @@ device_segments AS (
   GROUP BY w.window_days, d.device_id
 ),
 
+ga_device_version_days AS (
+  SELECT DISTINCT event_date, device_id, app_version
+  FROM ga_events
+  WHERE event_date BETWEEN earliest_date AND window_end
+    AND device_id IS NOT NULL
+),
+
+ga_instance_version_days AS (
+  SELECT DISTINCT event_date, user_pseudo_id, app_version
+  FROM ga_events
+  WHERE event_date BETWEEN earliest_date AND window_end
+),
+
+-- Unnesting ['all', <version>] puts every row in both its own version bucket and
+-- the rolled-up one, so the two levels cannot disagree.
 crash_by_segment AS (
   SELECT
     e.app,
     w.window_days,
     e.error_type,
+    vk AS app_version,
     IFNULL(s.user_segment, 'non-connect') AS user_segment,
     COUNT(*) AS total_events,
     COUNT(DISTINCT IFNULL(e.device_id, e.installation_uuid)) AS affected_users,
@@ -114,10 +129,12 @@ crash_by_segment AS (
     MIN(e.event_date) AS first_event_date
   FROM crash_events e
   CROSS JOIN windows w
+  CROSS JOIN UNNEST(['all', e.app_version]) AS vk
   LEFT JOIN device_segments s
     ON s.window_days = w.window_days AND s.device_id = e.device_id
   WHERE e.event_date >= DATE_SUB(window_end, INTERVAL w.window_days - 1 DAY)
-  GROUP BY e.app, w.window_days, e.error_type, user_segment
+    AND e.app = 'commcare'
+  GROUP BY e.app, w.window_days, e.error_type, vk, user_segment
 ),
 
 crash_device_all AS (
@@ -125,6 +142,7 @@ crash_device_all AS (
     e.app,
     w.window_days,
     e.error_type,
+    vk AS app_version,
     'all-by-device' AS user_segment,
     COUNT(*) AS total_events,
     COUNT(DISTINCT IFNULL(e.device_id, e.installation_uuid)) AS affected_users,
@@ -132,10 +150,12 @@ crash_device_all AS (
     MIN(e.event_date) AS first_event_date
   FROM crash_events e
   CROSS JOIN windows w
+  CROSS JOIN UNNEST(['all', e.app_version]) AS vk
   LEFT JOIN device_segments s
     ON s.window_days = w.window_days AND s.device_id = e.device_id
   WHERE e.event_date >= DATE_SUB(window_end, INTERVAL w.window_days - 1 DAY)
-  GROUP BY e.app, w.window_days, e.error_type
+    AND e.app = 'commcare'
+  GROUP BY e.app, w.window_days, e.error_type, vk
 ),
 
 crash_installation_all AS (
@@ -143,55 +163,68 @@ crash_installation_all AS (
     e.app,
     w.window_days,
     e.error_type,
+    vk AS app_version,
     COUNT(*) AS total_events,
     COUNT(DISTINCT e.installation_uuid) AS affected_users,
     MIN(e.event_date) AS first_event_date
   FROM crash_events e
   CROSS JOIN windows w
+  CROSS JOIN UNNEST(['all', e.app_version]) AS vk
   WHERE e.event_date >= DATE_SUB(window_end, INTERVAL w.window_days - 1 DAY)
-  GROUP BY e.app, w.window_days, e.error_type
+  GROUP BY e.app, w.window_days, e.error_type, vk
 ),
 
 device_totals AS (
-  SELECT window_days, user_segment, COUNT(DISTINCT device_id) AS total_users
-  FROM device_segments
-  GROUP BY window_days, user_segment
+  SELECT w.window_days, vk AS app_version, s.user_segment, COUNT(DISTINCT d.device_id) AS total_users
+  FROM ga_device_version_days d
+  CROSS JOIN windows w
+  CROSS JOIN UNNEST(['all', d.app_version]) AS vk
+  JOIN device_segments s
+    ON s.window_days = w.window_days AND s.device_id = d.device_id
+  WHERE d.event_date >= DATE_SUB(window_end, INTERVAL w.window_days - 1 DAY)
+  GROUP BY w.window_days, vk, s.user_segment
 
   UNION ALL
 
-  SELECT window_days, 'all-by-device' AS user_segment, COUNT(DISTINCT device_id) AS total_users
-  FROM device_segments
-  GROUP BY window_days
+  SELECT w.window_days, vk AS app_version, 'all-by-device' AS user_segment, COUNT(DISTINCT d.device_id) AS total_users
+  FROM ga_device_version_days d
+  CROSS JOIN windows w
+  CROSS JOIN UNNEST(['all', d.app_version]) AS vk
+  WHERE d.event_date >= DATE_SUB(window_end, INTERVAL w.window_days - 1 DAY)
+  GROUP BY w.window_days, vk
 ),
 
 instance_totals AS (
-  SELECT w.window_days, COUNT(DISTINCT i.user_pseudo_id) AS total_users
-  FROM ga_instance_days i
+  SELECT w.window_days, vk AS app_version, COUNT(DISTINCT i.user_pseudo_id) AS total_users
+  FROM ga_instance_version_days i
   CROSS JOIN windows w
+  CROSS JOIN UNNEST(['all', i.app_version]) AS vk
   WHERE i.event_date >= DATE_SUB(window_end, INTERVAL w.window_days - 1 DAY)
-  GROUP BY w.window_days
+  GROUP BY w.window_days, vk
 ),
 
 combined AS (
   SELECT c.*, t.total_users
   FROM (SELECT * FROM crash_by_segment UNION ALL SELECT * FROM crash_device_all) c
   LEFT JOIN device_totals t
-    ON t.window_days = c.window_days AND t.user_segment = c.user_segment
-  WHERE c.app = 'commcare'
+    ON t.window_days = c.window_days
+   AND t.app_version = c.app_version
+   AND t.user_segment = c.user_segment
 
   UNION ALL
 
-  SELECT c.app, c.window_days, c.error_type, 'all-by-installation' AS user_segment,
+  SELECT c.app, c.window_days, c.error_type, c.app_version, 'all-by-installation' AS user_segment,
          c.total_events, c.affected_users, CAST(NULL AS INT64) AS unmatched_affected_users,
          c.first_event_date, t.total_users
   FROM crash_installation_all c
   LEFT JOIN instance_totals t
-    ON t.window_days = c.window_days AND c.app = 'commcare'
+    ON t.window_days = c.window_days AND t.app_version = c.app_version AND c.app = 'commcare'
 )
 
 SELECT
   CURRENT_DATE() AS run_date,
   app,
+  app_version,
   user_segment,
   window_days,
   error_type,
@@ -204,4 +237,4 @@ SELECT
   ROUND(100 * (1 - SAFE_DIVIDE(affected_users, total_users)), 2) AS free_users_pct,
   DATE_DIFF(window_end, first_event_date, DAY) + 1 AS days_covered
 FROM combined
-ORDER BY app, window_days, error_type, user_segment;
+ORDER BY app, app_version, window_days, error_type, user_segment;

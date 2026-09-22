@@ -13,11 +13,28 @@ Crashlytics console), broken down by Connect and non-Connect users.
 | `ga_device_day_table.sql` | DDL for the GA4 daily rollup. Safe to re-run. |
 | `ga_device_day_insert.sql` | refreshes the rollup. **Must run before the metrics insert.** |
 | `crash_usage_history_table.sql` | DDL for the history table. Safe to re-run: `CREATE TABLE IF NOT EXISTS`. |
-| `crash_usage_history_insert.sql` | the scheduled query - same body, wrapped in a guarded insert. |
+| `crash_usage_history_insert.sql` | the metrics insert on its own. Source for the scheduled file; also fine to run by hand. |
+| `crash_usage_scheduled.sql` | **the one query to schedule.** Rollup refresh then metrics insert, generated. |
 
-The two query files share a body that is duplicated rather than shared, because each
-one has to stand alone as a BigQuery saved query. **Changes to the measurement query
-need copying into the insert query**, and the insert is the one that matters.
+### Generated files
+
+Each file has to stand alone as a BigQuery saved query, so the shared bodies are copied
+rather than referenced. There is a chain, and only the first link is hand-edited:
+
+```
+crash_usage_metrics.sql  ->  crash_usage_history_insert.sql  ->  crash_usage_scheduled.sql
+ga_device_day_insert.sql ---------------------------------------^
+```
+
+- `crash_usage_history_insert.sql` is the measurement query with the ORDER BY dropped,
+  `inserted_at` added, and the whole thing wrapped in the ASSERT, DELETE and INSERT.
+- `crash_usage_scheduled.sql` is `ga_device_day_insert.sql` followed by
+  `crash_usage_history_insert.sql`, with their DECLARE blocks merged and de-duplicated
+  so both halves share one `data_lag_days` and their windows cannot drift apart.
+
+**Edit `crash_usage_metrics.sql` or `ga_device_day_insert.sql`, then regenerate the
+other two.** Editing a generated file directly will be silently undone by the next
+regeneration.
 
 ## Output
 
@@ -185,10 +202,15 @@ shares the `org.commcare.dalvik` applicationId but is negligible (~14 users/day)
 
 Measured at the on-demand rate of $6.25/TiB, with no reservation on the project.
 
-| | per run | per year, weekly |
+| | per run | per year |
 |---|---|---|
-| before the rollup | 0.40 TiB, $2.52 | $131 |
-| rollup refresh + metrics | 64 GiB, $0.39 | $20 |
+| before the rollup, weekly | 0.40 TiB, $2.52 | $131 |
+| before the rollup, daily | 0.40 TiB, $2.52 | $920 |
+| rollup + metrics, weekly | 64 GiB, $0.39 | $20 |
+| rollup + metrics, daily | 32 GiB, $0.20 | $73 |
+
+Measured on a real combined run: rollup insert 26.34 GiB, ASSERT 0.03 GiB, metrics
+insert 1.35 GiB.
 
 The metrics query itself is now 1.4 GiB ($0.01); essentially all of the remaining cost is
 the rollup refresh reading new GA4 day-shards at about 5.3 GiB each.
@@ -228,7 +250,14 @@ First run inserted `2026-09-21`.
 
 ### Scheduling
 
-Not scheduled yet. Monthly fits both the intended use and the cost. Note that the
-window is anchored on the run date, not on calendar month boundaries - each row records
-its own `window_start` / `window_end`, so an irregular run just shifts the window rather
-than corrupting the series.
+Schedule `crash_usage_scheduled.sql`, daily. It is one query, so there is no second job
+to keep in step and no window in which the metrics could run off a stale rollup.
+
+Daily is not the cheapest cadence - every run pays a fixed overlap of `refresh_days`
+plus a day of `_TABLE_SUFFIX` slack either side, so daily costs about $73 a year against
+$20 weekly. It is worth it for release monitoring: on a weekly cadence a bad release can
+be live for six days before it appears in a row.
+
+The window is anchored on the run date, not on calendar boundaries. Each row records its
+own `window_start` / `window_end`, so a missed or irregular run shifts the window rather
+than corrupting the series, and the rollup refresh backfills whatever gap it left.

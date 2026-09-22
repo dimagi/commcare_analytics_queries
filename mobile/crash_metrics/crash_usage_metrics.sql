@@ -92,8 +92,8 @@ device_segments AS (
     w.window_days,
     d.device_id,
     CASE
-      WHEN NOT LOGICAL_OR(d.is_connect) THEN 'non_connect'
-      WHEN d.device_id IN (SELECT device_id FROM demo_devices) THEN 'connect_demo'
+      WHEN NOT LOGICAL_OR(d.is_connect) THEN 'non-connect'
+      WHEN d.device_id IN (SELECT device_id FROM demo_devices) THEN 'connect-demo'
       ELSE 'connect'
     END AS user_segment
   FROM ga_device_days d
@@ -107,7 +107,7 @@ crash_by_segment AS (
     e.app,
     w.window_days,
     e.error_type,
-    IFNULL(s.user_segment, 'non_connect') AS user_segment,
+    IFNULL(s.user_segment, 'non-connect') AS user_segment,
     COUNT(*) AS total_events,
     COUNT(DISTINCT IFNULL(e.device_id, e.installation_uuid)) AS affected_users,
     COUNT(DISTINCT IF(s.user_segment IS NULL, IFNULL(e.device_id, e.installation_uuid), NULL)) AS unmatched_affected_users,

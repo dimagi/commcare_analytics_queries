@@ -25,7 +25,7 @@ One row per app x id basis x segment x window x event type.
 |---|---|
 | `run_date` | date the query ran |
 | `app` | `commcare` (`org.commcare.dalvik`) or `lts` (`org.commcare.lts`) |
-| `user_segment` | `all-by-device`, `all-by-installation`, `connect`, `connect_demo` or `non_connect` |
+| `user_segment` | `all-by-device`, `all-by-installation`, `connect`, `connect-demo` or `non-connect` |
 | `window_days` | 30 or 90 |
 | `error_type` | `FATAL` (a crash) or `ANR` |
 | `window_start` / `window_end` | inclusive window bounds |
@@ -50,7 +50,7 @@ only row available for LTS.
 
 `all-by-device` and the three breakdown segments use the `device_id` custom key for both
 numerator and denominator. That is what supports the Connect split, and it is internally
-consistent - `connect + connect_demo + non_connect` sums exactly to `all-by-device` on
+consistent - `connect + connect-demo + non-connect` sums exactly to `all-by-device` on
 events, affected users and total users. It counts fewer users (158k vs 193k over 30
 days, since not every app instance reports a `device_id`), so its percentages sit a
 little lower.
@@ -63,9 +63,9 @@ them together, and never chart one against the other.
 Assigned per device per window from the GA4 `ccc_enabled` user property:
 
 - `connect` - `ccc_enabled` set on any event in the window
-- `connect_demo` - a Connect device whose latest `personalid_config_sessions` entry has
+- `connect-demo` - a Connect device whose latest `personalid_config_sessions` entry has
   a phone number starting `+7426` or listed in `dimagi_phones`
-- `non_connect` - everything else, including devices with no GA4 match
+- `non-connect` - everything else, including devices with no GA4 match
 
 `ccc_enabled` turns on when a user configures their Connect account and stays on, so
 "ever set" is the right test: a device that reports it at any point in the window was a
@@ -86,9 +86,9 @@ Rows already written are snapshots and never change, but a device can be reclass
 between runs if a newer session appears.
 
 The unmatched-device rule is not symmetric, which is what `unmatched_affected_users` records.
-Unmatched devices are absent from GA4 entirely, so they add to the `non_connect`
+Unmatched devices are absent from GA4 entirely, so they add to the `non-connect`
 numerator but nothing to its denominator - there is no way to know how many *non
-crashing* unmatched devices exist. The effect is to push `non_connect` (and `all`)
+crashing* unmatched devices exist. The effect is to push `non-connect` (and `all-by-device`)
 `free_users_pct` down by roughly 0.4pp. Small, but it is a floor on how precise these
 percentages can be, and it is worth watching if the unmatched share ever grows.
 
@@ -122,11 +122,11 @@ segment the split moves. This is the number to watch if the breakdown ever looks
 signal on the user properties (alongside `ccc_job_id`, which is far sparser). Worth a
 sanity check from someone who knows how the property is set in the app.
 
-**Connect is a small base, and `connect_demo` is a very small one.** Roughly 2,900
+**Connect is a small base, and `connect-demo` is a very small one.** Roughly 2,900
 Connect and 600 demo devices over 30 days, against ~155k non-Connect. Connect
 percentages move on much smaller counts and will be noisier month to month; demo ones
 are built on so few crash events that individual months mean little. `days_covered` is
-also close to meaningless for `connect_demo` - with a handful of events it just records
+also close to meaningless for `connect-demo` - with a handful of events it just records
 when the first one happened, not how much history the window holds.
 
 Splitting demo devices out matters more than their count suggests: they were pulling

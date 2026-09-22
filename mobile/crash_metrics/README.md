@@ -9,7 +9,8 @@ Crashlytics console), broken down by Connect and non-Connect users.
 | File | What it is |
 |---|---|
 | `crash_usage_metrics.sql` | measurement only - emits the numbers, writes nothing. Use it to eyeball a window or compare against the console. |
-| `crash_usage_history_table.sql` | one-off DDL for the history table. Already run. |
+| `crash_usage_history_table.sql` | DDL for the history table, kept at the current end state. Already run. |
+| `crash_usage_history_alter_20260922.sql` | one-off migration folding the segments down to two. Already run. |
 | `crash_usage_history_insert.sql` | the scheduled query - same body, wrapped in a guarded insert. |
 
 The two query files share a body that is duplicated rather than shared, because each
@@ -25,13 +26,14 @@ One row per app x id basis x segment x window x event type.
 | `run_date` | date the query ran |
 | `app` | `commcare` (`org.commcare.dalvik`) or `lts` (`org.commcare.lts`) |
 | `id_basis` | how users are counted, `device` or `installation` (see below) |
-| `user_segment` | `all`, `connect`, `mixed`, `non_connect`, `unknown` |
+| `user_segment` | `all`, `connect` or `non_connect` |
 | `window_days` | 30 or 90 |
 | `error_type` | `FATAL` (a crash) or `ANR` |
 | `window_start` / `window_end` | inclusive window bounds |
 | `total_events` | total crashes / ANRs |
 | `affected_users` | unique crashing / ANR-ing users |
 | `total_users` | unique active users over the window |
+| `unmatched_affected_users` | of `affected_users`, how many had no GA4 match |
 | `free_users_pct` | `100 * (1 - affected_users / total_users)` |
 | `days_covered` | days of Crashlytics history actually present in the window |
 
@@ -54,15 +56,21 @@ instance reports a `device_id`), so its percentages sit a little lower.
 
 Assigned per device per window from the GA4 `ccc_enabled` user property:
 
-- `connect` - Connect enabled on every event in the window
-- `mixed` - Connect enabled for part of the window only
-- `non_connect` - never enabled
-- `unknown` - crash events whose `device_id` did not match any GA4 device, so they
-  cannot be placed. Numerator only, no denominator.
+- `connect` - `ccc_enabled` set on any event in the window
+- `non_connect` - everything else, including devices with no GA4 match
 
-`mixed` exists because switchers behave much more like non-Connect users than Connect
-ones (94.7% vs 76.8% ANR-free over 30 days). Folding them into `connect`, as an "ever
-enabled" rule would, measurably dilutes the signal.
+`ccc_enabled` turns on when a user configures their Connect account and stays on, so
+"ever set" is the right test: a device that reports it at any point in the window was a
+Connect user throughout. Devices whose crashes carry a `device_id` that matches no GA4
+device count as non-Connect, on the basis that a Connect user gets far enough through
+setup to be reporting one.
+
+That second rule is not symmetric, which is what `unmatched_affected_users` records.
+Unmatched devices are absent from GA4 entirely, so they add to the `non_connect`
+numerator but nothing to its denominator - there is no way to know how many *non
+crashing* unmatched devices exist. The effect is to push `non_connect` (and `all`)
+`free_users_pct` down by roughly 0.4pp. Small, but it is a floor on how precise these
+percentages can be, and it is worth watching if the unmatched share ever grows.
 
 ## Sources
 

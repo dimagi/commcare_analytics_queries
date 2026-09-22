@@ -14,7 +14,7 @@ INSERT INTO `commcare-a57e4.mobile_metrics.crash_usage_history`
 (
   run_date, app, id_basis, user_segment, window_days, error_type,
   window_start, window_end, total_events, affected_users, total_users,
-  free_users_pct, days_covered, inserted_at
+  unmatched_affected_users, free_users_pct, days_covered, inserted_at
 )
 WITH windows AS (
   SELECT 30 AS window_days UNION ALL SELECT 90
@@ -68,25 +68,20 @@ ga_device_days AS (
   SELECT
     event_date,
     device_id,
-    LOGICAL_OR(is_connect) AS any_connect,
-    LOGICAL_AND(is_connect) AS all_connect
+    LOGICAL_OR(is_connect) AS is_connect
   FROM ga_events
   WHERE event_date BETWEEN earliest_date AND window_end
     AND device_id IS NOT NULL
   GROUP BY event_date, device_id
 ),
 
--- Devices that ran Connect for only part of the window behave much more like
--- non-Connect ones, so they get their own segment rather than diluting either side.
+-- ccc_enabled turns on when the user configures their Connect account and stays
+-- on, so a device that ever reports it was a Connect user for the whole window.
 device_segments AS (
   SELECT
     w.window_days,
     d.device_id,
-    CASE
-      WHEN LOGICAL_AND(d.all_connect) THEN 'connect'
-      WHEN LOGICAL_OR(d.any_connect) THEN 'mixed'
-      ELSE 'non_connect'
-    END AS user_segment
+    IF(LOGICAL_OR(d.is_connect), 'connect', 'non_connect') AS user_segment
   FROM ga_device_days d
   CROSS JOIN windows w
   WHERE d.event_date >= DATE_SUB(window_end, INTERVAL w.window_days - 1 DAY)
@@ -98,9 +93,10 @@ crash_by_segment AS (
     e.app,
     w.window_days,
     e.error_type,
-    IFNULL(s.user_segment, 'unknown') AS user_segment,
+    IFNULL(s.user_segment, 'non_connect') AS user_segment,
     COUNT(*) AS total_events,
     COUNT(DISTINCT IFNULL(e.device_id, e.installation_uuid)) AS affected_users,
+    COUNT(DISTINCT IF(s.user_segment IS NULL, IFNULL(e.device_id, e.installation_uuid), NULL)) AS unmatched_affected_users,
     MIN(e.event_date) AS first_event_date
   FROM crash_events e
   CROSS JOIN windows w
@@ -118,9 +114,12 @@ crash_device_all AS (
     'all' AS user_segment,
     COUNT(*) AS total_events,
     COUNT(DISTINCT IFNULL(e.device_id, e.installation_uuid)) AS affected_users,
+    COUNT(DISTINCT IF(s.user_segment IS NULL, IFNULL(e.device_id, e.installation_uuid), NULL)) AS unmatched_affected_users,
     MIN(e.event_date) AS first_event_date
   FROM crash_events e
   CROSS JOIN windows w
+  LEFT JOIN device_segments s
+    ON s.window_days = w.window_days AND s.device_id = e.device_id
   WHERE e.event_date >= DATE_SUB(window_end, INTERVAL w.window_days - 1 DAY)
   GROUP BY e.app, w.window_days, e.error_type
 ),
@@ -169,7 +168,8 @@ combined AS (
   UNION ALL
 
   SELECT 'installation' AS id_basis, c.app, c.window_days, c.error_type, 'all' AS user_segment,
-         c.total_events, c.affected_users, c.first_event_date, t.total_users
+         c.total_events, c.affected_users, CAST(NULL AS INT64) AS unmatched_affected_users,
+         c.first_event_date, t.total_users
   FROM crash_installation_all c
   LEFT JOIN instance_totals t
     ON t.window_days = c.window_days AND c.app = 'commcare'
@@ -187,6 +187,7 @@ SELECT
   total_events,
   affected_users,
   total_users,
+  unmatched_affected_users,
   ROUND(100 * (1 - SAFE_DIVIDE(affected_users, total_users)), 2) AS free_users_pct,
   DATE_DIFF(window_end, first_event_date, DAY) + 1 AS days_covered,
   CURRENT_TIMESTAMP() AS inserted_at

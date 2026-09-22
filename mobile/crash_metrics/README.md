@@ -25,32 +25,38 @@ One row per app x id basis x segment x window x event type.
 |---|---|
 | `run_date` | date the query ran |
 | `app` | `commcare` (`org.commcare.dalvik`) or `lts` (`org.commcare.lts`) |
-| `id_basis` | how users are counted, `device` or `installation` (see below) |
-| `user_segment` | `all`, `connect`, `connect_demo` or `non_connect` |
+| `user_segment` | `all-by-device`, `all-by-installation`, `connect`, `connect_demo` or `non_connect` |
 | `window_days` | 30 or 90 |
 | `error_type` | `FATAL` (a crash) or `ANR` |
 | `window_start` / `window_end` | inclusive window bounds |
 | `total_events` | total crashes / ANRs |
 | `affected_users` | unique crashing / ANR-ing users |
 | `total_users` | unique active users over the window |
-| `unmatched_affected_users` | of `affected_users`, how many had no GA4 match |
+| `unmatched_affected_users` | of `affected_users`, how many had no GA4 match; NULL for `all-by-installation` |
 | `free_users_pct` | `100 * (1 - affected_users / total_users)` |
 | `days_covered` | days of Crashlytics history actually present in the window |
 
 `data_lag_days` (default 2) holds the window back from today. The Crashlytics export
 lands a day or two late, and including a partial day badly understates the counts.
 
-### The two id bases
+### The two ways of counting a user
 
-`installation` rows reproduce the original console-comparable measure: Crashlytics
-`installation_uuid` over GA4 `user_pseudo_id`. They cannot be segmented, and they are
-the only rows available for LTS.
+Crashlytics and GA4 do not share a user id, so there are two ways to count one and both
+are reported. The `user_segment` value says which is in play.
 
-`device` rows use the `device_id` custom key for both numerator and denominator. This
-is the basis that supports the Connect breakdown, and it is internally consistent -
-the segments sum exactly to `all` on events, affected users and total users. It counts
-fewer users than the installation basis (159k vs 194k over 30 days, since not every app
-instance reports a `device_id`), so its percentages sit a little lower.
+`all-by-installation` reproduces the original console-comparable measure: Crashlytics
+`installation_uuid` over GA4 `user_pseudo_id`. It cannot be broken down, and it is the
+only row available for LTS.
+
+`all-by-device` and the three breakdown segments use the `device_id` custom key for both
+numerator and denominator. That is what supports the Connect split, and it is internally
+consistent - `connect + connect_demo + non_connect` sums exactly to `all-by-device` on
+events, affected users and total users. It counts fewer users (158k vs 193k over 30
+days, since not every app instance reports a `device_id`), so its percentages sit a
+little lower.
+
+The two `all` rows are therefore alternative totals, not parts of one whole - never add
+them together, and never chart one against the other.
 
 ### Segments
 
@@ -127,7 +133,7 @@ Splitting demo devices out matters more than their count suggests: they were pul
 the Connect figures up noticeably. Over 30 days, ANR-free for `connect` drops from
 83.2% to 79.7% once they are removed.
 
-**The `installation` percentage will not match the Firebase console exactly.**
+**The `all-by-installation` percentage will not match the Firebase console exactly.**
 `affected_users` counts Crashlytics installations (`installation_uuid`, 64 hex chars);
 `total_users` counts GA4 app instances (`user_pseudo_id`, 32 hex chars). The two ID
 spaces do not overlap at all, so this is a ratio of two independently-derived device
@@ -167,13 +173,13 @@ the query output plus `inserted_at`, partitioned by `run_date` and clustered by
 `app, error_type`. Long format rather than one wide row per run (as the spreadsheet
 does) so new segments or windows are extra rows, not schema changes.
 
-24 rows per run: 16 for the `commcare` device basis (3 segments plus `all`, across two
-windows and two event types), 4 for the `commcare` installation basis, 4 for `lts`.
+24 rows per run: for `commcare`, 4 segments plus `all-by-installation` across two
+windows and two event types (20), and 4 `all-by-installation` rows for `lts`.
 
 `crash_usage_history_insert.sql` wraps the delete and the insert in one transaction and
 clears `run_date = CURRENT_DATE()` first, so running it twice in a day replaces that
 day's rows instead of duplicating them. Verified against a scratch copy: a second run
-leaves 28 rows, not 56.
+leaves 24 rows, not 48.
 
 First run inserted `2026-09-21`.
 

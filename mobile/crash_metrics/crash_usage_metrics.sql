@@ -125,7 +125,7 @@ crash_device_all AS (
     e.app,
     w.window_days,
     e.error_type,
-    'all' AS user_segment,
+    'all-by-device' AS user_segment,
     COUNT(*) AS total_events,
     COUNT(DISTINCT IFNULL(e.device_id, e.installation_uuid)) AS affected_users,
     COUNT(DISTINCT IF(s.user_segment IS NULL, IFNULL(e.device_id, e.installation_uuid), NULL)) AS unmatched_affected_users,
@@ -159,7 +159,7 @@ device_totals AS (
 
   UNION ALL
 
-  SELECT window_days, 'all' AS user_segment, COUNT(DISTINCT device_id) AS total_users
+  SELECT window_days, 'all-by-device' AS user_segment, COUNT(DISTINCT device_id) AS total_users
   FROM device_segments
   GROUP BY window_days
 ),
@@ -173,7 +173,7 @@ instance_totals AS (
 ),
 
 combined AS (
-  SELECT 'device' AS id_basis, c.*, t.total_users
+  SELECT c.*, t.total_users
   FROM (SELECT * FROM crash_by_segment UNION ALL SELECT * FROM crash_device_all) c
   LEFT JOIN device_totals t
     ON t.window_days = c.window_days AND t.user_segment = c.user_segment
@@ -181,7 +181,7 @@ combined AS (
 
   UNION ALL
 
-  SELECT 'installation' AS id_basis, c.app, c.window_days, c.error_type, 'all' AS user_segment,
+  SELECT c.app, c.window_days, c.error_type, 'all-by-installation' AS user_segment,
          c.total_events, c.affected_users, CAST(NULL AS INT64) AS unmatched_affected_users,
          c.first_event_date, t.total_users
   FROM crash_installation_all c
@@ -192,7 +192,6 @@ combined AS (
 SELECT
   CURRENT_DATE() AS run_date,
   app,
-  id_basis,
   user_segment,
   window_days,
   error_type,
@@ -205,4 +204,4 @@ SELECT
   ROUND(100 * (1 - SAFE_DIVIDE(affected_users, total_users)), 2) AS free_users_pct,
   DATE_DIFF(window_end, first_event_date, DAY) + 1 AS days_covered
 FROM combined
-ORDER BY app, id_basis, window_days, error_type, user_segment;
+ORDER BY app, window_days, error_type, user_segment;

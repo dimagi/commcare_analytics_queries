@@ -64,6 +64,27 @@ ga_instance_days AS (
   WHERE event_date BETWEEN earliest_date AND window_end
 ),
 
+-- Latest config session per device decides demo status. dimagi_phones holds a
+-- few repeated numbers, so this is a semi-join to avoid fanning out.
+demo_devices AS (
+  SELECT device_id
+  FROM (
+    SELECT
+      device_id,
+      phone_number,
+      ROW_NUMBER() OVER (PARTITION BY device_id ORDER BY created DESC) AS rn
+    FROM `commcare-a57e4.analytics_153906101.personalid_config_sessions`
+    WHERE device_id IS NOT NULL
+  )
+  WHERE rn = 1
+    AND (
+      STARTS_WITH(phone_number, '+7426')
+      OR LTRIM(phone_number, '+') IN (
+        SELECT phone FROM `commcare-a57e4.analytics_153906101.dimagi_phones`
+      )
+    )
+),
+
 ga_device_days AS (
   SELECT
     event_date,
@@ -81,7 +102,11 @@ device_segments AS (
   SELECT
     w.window_days,
     d.device_id,
-    IF(LOGICAL_OR(d.is_connect), 'connect', 'non_connect') AS user_segment
+    CASE
+      WHEN NOT LOGICAL_OR(d.is_connect) THEN 'non_connect'
+      WHEN d.device_id IN (SELECT device_id FROM demo_devices) THEN 'connect_demo'
+      ELSE 'connect'
+    END AS user_segment
   FROM ga_device_days d
   CROSS JOIN windows w
   WHERE d.event_date >= DATE_SUB(window_end, INTERVAL w.window_days - 1 DAY)

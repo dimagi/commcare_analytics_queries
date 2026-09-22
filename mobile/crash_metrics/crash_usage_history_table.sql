@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS `commcare-a57e4.mobile_metrics.crash_usage_history`
   run_date       DATE     NOT NULL OPTIONS(description = "Date the populating query ran"),
   app            STRING   NOT NULL OPTIONS(description = "commcare (org.commcare.dalvik) or lts (org.commcare.lts)"),
   id_basis       STRING   NOT NULL OPTIONS(description = "device (device_id custom key, supports segments) or installation (installation_uuid over GA4 user_pseudo_id, console-comparable)"),
-  user_segment   STRING   NOT NULL OPTIONS(description = "all, connect or non_connect. A device counts as connect if ccc_enabled was ever set during the window; devices with no GA4 match count as non_connect"),
+  user_segment   STRING   NOT NULL OPTIONS(description = "all, connect, connect_demo or non_connect. A device counts as connect if ccc_enabled was ever set during the window; connect_demo if its latest personalid_config_sessions phone number starts +7426 or appears in dimagi_phones; devices with no GA4 match count as non_connect"),
   window_days    INT64    NOT NULL OPTIONS(description = "Length of the lookback window, 30 or 90"),
   error_type     STRING   NOT NULL OPTIONS(description = "FATAL (a crash) or ANR"),
   window_start   DATE     NOT NULL OPTIONS(description = "First day of the window, inclusive"),

@@ -26,7 +26,7 @@ One row per app x id basis x segment x window x event type.
 | `run_date` | date the query ran |
 | `app` | `commcare` (`org.commcare.dalvik`) or `lts` (`org.commcare.lts`) |
 | `id_basis` | how users are counted, `device` or `installation` (see below) |
-| `user_segment` | `all`, `connect` or `non_connect` |
+| `user_segment` | `all`, `connect`, `connect_demo` or `non_connect` |
 | `window_days` | 30 or 90 |
 | `error_type` | `FATAL` (a crash) or `ANR` |
 | `window_start` / `window_end` | inclusive window bounds |
@@ -57,6 +57,8 @@ instance reports a `device_id`), so its percentages sit a little lower.
 Assigned per device per window from the GA4 `ccc_enabled` user property:
 
 - `connect` - `ccc_enabled` set on any event in the window
+- `connect_demo` - a Connect device whose latest `personalid_config_sessions` entry has
+  a phone number starting `+7426` or listed in `dimagi_phones`
 - `non_connect` - everything else, including devices with no GA4 match
 
 `ccc_enabled` turns on when a user configures their Connect account and stays on, so
@@ -65,7 +67,19 @@ Connect user throughout. Devices whose crashes carry a `device_id` that matches 
 device count as non-Connect, on the basis that a Connect user gets far enough through
 setup to be reporting one.
 
-That second rule is not symmetric, which is what `unmatched_affected_users` records.
+Demo devices are split out because they are Dimagi test and demo handsets, not field
+users, and they behave nothing like them - see below. Devices are matched to
+`personalid_config_sessions` on `device_id`, which is already stored there in the
+`commcare_<uuid>` form the Crashlytics key uses, so no rewriting is needed. Only the
+most recent session per device counts, and `dimagi_phones` repeats a few numbers, so
+that lookup is a semi-join to avoid fanning rows out. A Connect device with no config
+session at all stays `connect`.
+
+Demo status is taken from the latest session as of the run, not as of `window_end`.
+Rows already written are snapshots and never change, but a device can be reclassified
+between runs if a newer session appears.
+
+The unmatched-device rule is not symmetric, which is what `unmatched_affected_users` records.
 Unmatched devices are absent from GA4 entirely, so they add to the `non_connect`
 numerator but nothing to its denominator - there is no way to know how many *non
 crashing* unmatched devices exist. The effect is to push `non_connect` (and `all`)
@@ -102,9 +116,16 @@ segment the split moves. This is the number to watch if the breakdown ever looks
 signal on the user properties (alongside `ccc_job_id`, which is far sparser). Worth a
 sanity check from someone who knows how the property is set in the app.
 
-**Connect is a small base.** ~2,200 always-Connect devices over 30 days against ~155k
-non-Connect, so Connect percentages move on much smaller counts and will be noisier
-month to month.
+**Connect is a small base, and `connect_demo` is a very small one.** Roughly 2,900
+Connect and 600 demo devices over 30 days, against ~155k non-Connect. Connect
+percentages move on much smaller counts and will be noisier month to month; demo ones
+are built on so few crash events that individual months mean little. `days_covered` is
+also close to meaningless for `connect_demo` - with a handful of events it just records
+when the first one happened, not how much history the window holds.
+
+Splitting demo devices out matters more than their count suggests: they were pulling
+the Connect figures up noticeably. Over 30 days, ANR-free for `connect` drops from
+83.2% to 79.7% once they are removed.
 
 **The `installation` percentage will not match the Firebase console exactly.**
 `affected_users` counts Crashlytics installations (`installation_uuid`, 64 hex chars);
@@ -146,7 +167,7 @@ the query output plus `inserted_at`, partitioned by `run_date` and clustered by
 `app, error_type`. Long format rather than one wide row per run (as the spreadsheet
 does) so new segments or windows are extra rows, not schema changes.
 
-28 rows per run: 20 for the `commcare` device basis (4 segments plus `all`, across two
+24 rows per run: 16 for the `commcare` device basis (3 segments plus `all`, across two
 windows and two event types), 4 for the `commcare` installation basis, 4 for `lts`.
 
 `crash_usage_history_insert.sql` wraps the delete and the insert in one transaction and

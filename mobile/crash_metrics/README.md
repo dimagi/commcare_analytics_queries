@@ -202,7 +202,27 @@ report a percentage that sits near 29 and barely moves. For non-fatals the usefu
 measure is `total_events / affected_users`, which the views do not carry - go to the
 base table for it.
 
-The views deliberately read only the `'all'` version rows. Per-version analysis stays in
+### view_commcare_version_lifecycle
+
+One row per CommCare app version, giving the span over which it was seen carrying users:
+`first_day`, `last_day`, `peak_day`, `peak_total_users`, `days_observed`. Days are
+`run_date`, so they lag the underlying data by `data_lag_days`.
+
+Usage is read from `all-by-device` at `window_days = 30`. The 30 day window is the
+responsive one - on a 90 day window a version keeps looking alive for three months after
+its last real use.
+
+Two things limit what it can show. Only versions that produced at least one crash, ANR or
+logged exception appear at all, because the crash side drives which rows exist. And about
+a third of the versions in the table never reach a non-zero `total_users` on this segment
+(30 of 45 do), because Crashlytics and GA4 disagree about which version a device was on -
+those never appear here.
+
+It also inherits whatever junk is in `application.display_version`: `CommCare2.64.1` and
+`CommCare_2.64.1` show up alongside `2.64.1` as separate versions, each with a couple of
+users. Worth filtering on `peak_total_users` before charting.
+
+The other views deliberately read only the `'all'` version rows. Per-version analysis stays in
 `crash_usage_history`, where `app_version` is a proper dimension rather than a column
 per value.
 

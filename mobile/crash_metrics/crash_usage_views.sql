@@ -105,3 +105,31 @@ SELECT
 FROM `commcare-a57e4.mobile_metrics.crash_usage_history`
 WHERE app = 'lts' AND error_type = 'NON_FATAL' AND app_version = 'all'
 GROUP BY run_date;
+
+CREATE OR REPLACE VIEW `commcare-a57e4.mobile_metrics.view_commcare_version_lifecycle`
+OPTIONS(description = "One row per CommCare app version (the rolled-up 'all' row excluded), giving the span over which that version was seen carrying users. Usage is read from user_segment = 'all-by-device' at window_days = 30, which is the most responsive signal - a 90 day window keeps a version looking alive for three months after its last use. Days are run_date, so they lag the underlying data by data_lag_days. Only versions that produced at least one crash, ANR or logged exception appear at all, since the crash side drives which rows exist.")
+AS
+WITH daily AS (
+  -- total_users does not vary by error_type for a given version, segment and
+  -- window, so collapsing them here is lossless.
+  SELECT
+    app_version,
+    run_date,
+    MAX(total_users) AS total_users
+  FROM `commcare-a57e4.mobile_metrics.crash_usage_history`
+  WHERE app = 'commcare'
+    AND app_version != 'all'
+    AND user_segment = 'all-by-device'
+    AND window_days = 30
+    AND total_users > 0
+  GROUP BY app_version, run_date
+)
+SELECT
+  app_version,
+  MIN(run_date) AS first_day,
+  MAX(run_date) AS last_day,
+  ARRAY_AGG(run_date ORDER BY total_users DESC, run_date ASC LIMIT 1)[OFFSET(0)] AS peak_day,
+  MAX(total_users) AS peak_total_users,
+  COUNT(DISTINCT run_date) AS days_observed
+FROM daily
+GROUP BY app_version;

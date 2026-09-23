@@ -202,6 +202,33 @@ report a percentage that sits near 29 and barely moves. For non-fatals the usefu
 measure is `total_events / affected_users`, which the views do not carry - go to the
 base table for it.
 
+### view_commcare_version_summary
+
+One row per CommCare app version, summarising its health at the latest `run_date` from
+`all-by-device` at 30 days. Built to answer one question: which versions are bad, and do
+they matter enough to care.
+
+| column | |
+|---|---|
+| `users_30d`, `pct_of_fleet` | size - whether the version is worth acting on |
+| `crash_free_pct`, `anr_free_pct` | headline health |
+| `crash_free_vs_typical_pp`, `anr_free_vs_typical_pp` | the same, against a user-weighted mean across versions |
+| `crashes_per_1k_users`, `anrs_per_1k_users` | rates, comparable between versions of very different size |
+| `nonfatals_per_affected_user` | the non-fatal signal, which a percentage does not capture |
+| `crashes_30d`, `anrs_30d`, `days_covered` | raw volume, and how much history the window holds |
+
+**`pct_of_fleet` does not sum to 100.** A user who upgrades mid-window ran two versions
+and is counted under both, so the column sums to well over 100 across versions. It reads
+as "what share of the fleet touched this version", not as a partition of it.
+
+**The comparison is against a weighted mean across versions, not against the `'all'`
+row.** The `'all'` row de-duplicates users while the per-version rows do not, so
+comparing to it makes nearly every version look above average - an artefact, not a
+finding. The weighted mean is like for like, so zero means typical.
+
+A new version reads `days_covered` well below 30 and its rates are correspondingly
+unstable; check that column before reacting to a bad-looking figure.
+
 ### view_commcare_version_lifecycle
 
 One row per CommCare app version, giving the span over which it was seen carrying users:

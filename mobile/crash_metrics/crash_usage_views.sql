@@ -133,3 +133,73 @@ SELECT
   COUNT(DISTINCT run_date) AS days_observed
 FROM daily
 GROUP BY app_version;
+
+CREATE OR REPLACE VIEW `commcare-a57e4.mobile_metrics.view_commcare_version_summary`
+OPTIONS(description = "One row per CommCare app version summarising its health at the latest run_date, from user_segment = 'all-by-device' at window_days = 30. Carries size (users_30d, pct_of_fleet), health (crash_free_pct, anr_free_pct), the same health as a delta against a user-weighted mean across versions (_vs_typical_pp), and rates that are comparable across versions of different sizes. Non-fatals are given as events per affected user rather than a percentage, which for them is near-flat. Versions with no matching GA4 users show NULL rates.")
+AS
+WITH latest AS (
+  SELECT MAX(run_date) AS run_date
+  FROM `commcare-a57e4.mobile_metrics.crash_usage_history`
+  WHERE app = 'commcare'
+),
+snap AS (
+  SELECT h.*
+  FROM `commcare-a57e4.mobile_metrics.crash_usage_history` h
+  JOIN latest l USING (run_date)
+  WHERE h.app = 'commcare'
+    AND h.user_segment = 'all-by-device'
+    AND h.window_days = 30
+),
+-- The 'all' row is the deduplicated fleet. Used for share of fleet only: it is not a
+-- fair health baseline, because it counts a user once while the per-version rows count
+-- them under each version they ran, which makes almost every version look better than it.
+fleet AS (
+  SELECT MAX(total_users) AS users
+  FROM snap
+  WHERE app_version = 'all'
+),
+per_version AS (
+  SELECT
+    app_version,
+    MAX(total_users) AS users_30d,
+    MAX(days_covered) AS days_covered,
+    MAX(IF(error_type = 'FATAL', total_events, NULL)) AS crashes_30d,
+    MAX(IF(error_type = 'FATAL', affected_users, NULL)) AS crash_users_30d,
+    MAX(IF(error_type = 'FATAL', free_users_pct, NULL)) AS crash_free_pct,
+    MAX(IF(error_type = 'ANR', total_events, NULL)) AS anrs_30d,
+    MAX(IF(error_type = 'ANR', free_users_pct, NULL)) AS anr_free_pct,
+    MAX(IF(error_type = 'NON_FATAL', total_events, NULL)) AS nonfatals_30d,
+    MAX(IF(error_type = 'NON_FATAL', affected_users, NULL)) AS nonfatal_users_30d
+  FROM snap
+  WHERE app_version != 'all'
+  GROUP BY app_version
+),
+
+-- User-weighted mean across versions: like for like with the per-version figures, so a
+-- delta against it centres on zero and says "better or worse than a typical version".
+baseline AS (
+  SELECT
+    SAFE_DIVIDE(SUM(crash_free_pct * users_30d), SUM(users_30d)) AS crash_free_pct,
+    SAFE_DIVIDE(SUM(anr_free_pct * users_30d), SUM(users_30d)) AS anr_free_pct
+  FROM per_version
+  WHERE users_30d > 0
+)
+
+SELECT
+  (SELECT run_date FROM latest) AS run_date,
+  v.app_version,
+  v.users_30d,
+  ROUND(100 * SAFE_DIVIDE(v.users_30d, f.users), 1) AS pct_of_fleet,
+  v.crash_free_pct,
+  ROUND(v.crash_free_pct - b.crash_free_pct, 2) AS crash_free_vs_typical_pp,
+  v.anr_free_pct,
+  ROUND(v.anr_free_pct - b.anr_free_pct, 2) AS anr_free_vs_typical_pp,
+  ROUND(1000 * SAFE_DIVIDE(v.crashes_30d, v.users_30d), 1) AS crashes_per_1k_users,
+  ROUND(1000 * SAFE_DIVIDE(v.anrs_30d, v.users_30d), 1) AS anrs_per_1k_users,
+  ROUND(SAFE_DIVIDE(v.nonfatals_30d, v.nonfatal_users_30d), 1) AS nonfatals_per_affected_user,
+  v.crashes_30d,
+  v.anrs_30d,
+  v.days_covered
+FROM per_version v
+CROSS JOIN fleet f
+CROSS JOIN baseline b;

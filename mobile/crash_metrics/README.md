@@ -10,6 +10,7 @@ Crashlytics console), broken down by Connect and non-Connect users.
 |---|---|
 | `crash_usage_metrics.sql` | measurement only - emits the numbers, writes nothing. Use it to eyeball a window or compare against the console. |
 | `crash_usage_totals.sql` | helper: the pre-version view, one row per app x segment x window x event type. |
+| `crash_usage_views.sql` | DDL for the six daily helper views. Safe to re-run. |
 | `ga_device_day_table.sql` | DDL for the GA4 daily rollup. Safe to re-run. |
 | `ga_device_day_insert.sql` | refreshes the rollup. **Must run before the metrics insert.** |
 | `crash_usage_history_table.sql` | DDL for the history table. Safe to re-run: `CREATE TABLE IF NOT EXISTS`. |
@@ -174,6 +175,36 @@ Crashlytics carries no Connect marker of its own, so the segment has to come fro
 and be joined across on `device_id`. The Crashlytics custom key holds
 `commcare_<uuid>`; the GA4 user property holds the bare uuid, hence the `CONCAT` in the
 join, matching the existing PersonalID queries.
+
+## Helper views
+
+Six views, one per app x error type, each a daily time series over the rolled-up rows
+(`app_version = 'all'`). One row per `run_date`, with segment/window combinations
+pivoted into columns.
+
+```
+view_commcare_fatal_daily      view_lts_fatal_daily
+view_commcare_anr_daily        view_lts_anr_daily
+view_commcare_non_fatal_daily  view_lts_non_fatal_daily
+```
+
+The CommCare views carry `free_users_pct` for all five segments at both windows:
+`all_by_device_30d`, `all_by_installation_30d`, `connect_30d`, `connect_demo_30d`,
+`non_connect_30d`, then the same five at `_90d`.
+
+**The LTS views carry counts, not percentages** - `events_30d`, `affected_users_30d`
+and the 90 day equivalents. LTS has no GA4 stream, so `free_users_pct` is NULL on every
+one of its rows; built to the same shape as the CommCare views they would have been
+entirely empty.
+
+**The non-fatal views are the weakest of the six.** They are built the same way, so they
+report a percentage that sits near 29 and barely moves. For non-fatals the useful
+measure is `total_events / affected_users`, which the views do not carry - go to the
+base table for it.
+
+The views deliberately read only the `'all'` version rows. Per-version analysis stays in
+`crash_usage_history`, where `app_version` is a proper dimension rather than a column
+per value.
 
 ## Caveats
 

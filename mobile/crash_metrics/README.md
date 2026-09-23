@@ -46,7 +46,7 @@ One row per app x id basis x segment x window x event type.
 | `app` | `commcare` (`org.commcare.dalvik`) or `lts` (`org.commcare.lts`) |
 | `user_segment` | `all-by-device`, `all-by-installation`, `connect`, `connect-demo` or `non-connect` |
 | `window_days` | 30 or 90 |
-| `error_type` | `FATAL` (a crash) or `ANR` |
+| `error_type` | `FATAL` (a crash), `ANR`, or `NON_FATAL` (a logged exception) |
 | `window_start` / `window_end` | inclusive window bounds |
 | `total_events` | total crashes / ANRs |
 | `affected_users` | unique crashing / ANR-ing users |
@@ -142,8 +142,29 @@ cent a month.
 | crashes, ANRs, affected users | `firebase_crashlytics.org_commcare_dalvik_ANDROID`, `..._lts_ANDROID` |
 | active users, Connect status | `analytics_153906101.events_intraday_*` |
 
-`error_type` separates the two event kinds. `FATAL` is what the console calls a crash;
-`NON_FATAL` (logged exceptions, ~5M rows and by far the largest slice) is excluded.
+`error_type` separates the three event kinds. `FATAL` is what the console calls a crash,
+`ANR` an application-not-responding event, and `NON_FATAL` a logged exception - a
+`recordException` call, where the app carried on running.
+
+Including `NON_FATAL` costs nothing. BigQuery bills the columns it reads across the
+pruned partitions, and `error_type` is a row filter applied after that read, so widening
+it does not change the bill: measured byte-for-byte identical at 1,467,989,079 either
+way. It does grow the output, 537 rows to 888, because non-fatals reach more versions
+than crashes do.
+
+**For `NON_FATAL`, read `total_events / affected_users`, not `free_users_pct`.** Roughly
+70% of users log an exception in any 30 day window, so the percentage sits near 29 and
+barely moves - it is not a health signal the way crash-free is, and unlike crash-free
+there is no console figure to check it against. The ratio is far sharper. Over 30 days:
+
+| error_type | all-by-device | connect | non-connect |
+|---|---|---|---|
+| `FATAL` | 3.2 per affected user | 3.2 | 3.2 |
+| `ANR` | 4.1 | 8.8 | 3.8 |
+| `NON_FATAL` | 14.9 | **63.5** | 13.9 |
+
+A Connect user who logs exceptions logs about 64 of them in 30 days, against 14 for
+everyone else.
 
 Only `events_intraday_*` exists in `analytics_153906101` - this property has the
 streaming export but not the daily batch one, which is why every query in this repo

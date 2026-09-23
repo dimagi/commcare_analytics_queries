@@ -115,7 +115,7 @@ crash_events AS (
     IFNULL(application.display_version, 'unknown') AS app_version
   FROM `commcare-a57e4.firebase_crashlytics.org_commcare_dalvik_ANDROID`
   WHERE DATE(event_timestamp) BETWEEN earliest_date AND window_end
-    AND error_type IN ('FATAL', 'ANR')
+    AND error_type IN ('FATAL', 'ANR', 'NON_FATAL')
 
   UNION ALL
 
@@ -128,7 +128,7 @@ crash_events AS (
     IFNULL(application.display_version, 'unknown') AS app_version
   FROM `commcare-a57e4.firebase_crashlytics.org_commcare_lts_ANDROID`
   WHERE DATE(event_timestamp) BETWEEN earliest_date AND window_end
-    AND error_type IN ('FATAL', 'ANR')
+    AND error_type IN ('FATAL', 'ANR', 'NON_FATAL')
 ),
 
 -- Reads the daily rollup rather than the GA4 export, which is what keeps this

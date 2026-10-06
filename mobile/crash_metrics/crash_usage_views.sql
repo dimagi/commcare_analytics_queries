@@ -203,3 +203,107 @@ SELECT
 FROM per_version v
 CROSS JOIN fleet f
 CROSS JOIN baseline b;
+
+CREATE OR REPLACE VIEW `commcare-a57e4.mobile_metrics.view_commcare_crashes_sheet`
+OPTIONS(description = "Source for the connected sheet in the CommCare Mobile Metrics spreadsheet. One row per run_date for CommCare, rolled up across app versions. The first thirteen columns mirror the hand-kept CommCare Crashes tab, taken from all-by-installation as the console-comparable measure; the rest repeat the same figures for the connect and connect-demo (internal) segments, then (after data_through, so existing column positions in the sheet stay put) for non-connect as commcare_* and all-by-device as all_by_device_*, all of which count by device_id and reconcile with each other. Percentages are fractions (0.9421) so they format as percent in Sheets; counts are exact rather than the console's rounded 86K.")
+AS
+WITH pivoted AS (
+  SELECT
+    run_date,
+    ANY_VALUE(window_end) AS window_end,
+    user_segment,
+    MAX(IF(window_days = 90 AND error_type = 'FATAL', free_users_pct, NULL)) AS crash_free_90d,
+    MAX(IF(window_days = 90 AND error_type = 'FATAL', total_events, NULL)) AS crashes_90d,
+    MAX(IF(window_days = 90 AND error_type = 'FATAL', affected_users, NULL)) AS crash_users_90d,
+    MAX(IF(window_days = 30 AND error_type = 'FATAL', free_users_pct, NULL)) AS crash_free_30d,
+    MAX(IF(window_days = 30 AND error_type = 'FATAL', total_events, NULL)) AS crashes_30d,
+    MAX(IF(window_days = 30 AND error_type = 'FATAL', affected_users, NULL)) AS crash_users_30d,
+    MAX(IF(window_days = 90 AND error_type = 'ANR', free_users_pct, NULL)) AS anr_free_90d,
+    MAX(IF(window_days = 90 AND error_type = 'ANR', total_events, NULL)) AS anrs_90d,
+    MAX(IF(window_days = 90 AND error_type = 'ANR', affected_users, NULL)) AS anr_users_90d,
+    MAX(IF(window_days = 30 AND error_type = 'ANR', free_users_pct, NULL)) AS anr_free_30d,
+    MAX(IF(window_days = 30 AND error_type = 'ANR', total_events, NULL)) AS anrs_30d,
+    MAX(IF(window_days = 30 AND error_type = 'ANR', affected_users, NULL)) AS anr_users_30d
+  FROM `commcare-a57e4.mobile_metrics.crash_usage_history`
+  WHERE app = 'commcare'
+    AND app_version = 'all'
+    AND user_segment IN ('all-by-installation', 'all-by-device', 'connect', 'connect-demo', 'non-connect')
+    AND error_type IN ('FATAL', 'ANR')
+  GROUP BY run_date, user_segment
+)
+SELECT
+  a.run_date AS date,
+  ROUND(a.crash_free_90d / 100, 4) AS crash_free_users_90d,
+  0.95 AS goal,
+  0.935 AS alert_in_slack,
+  a.crashes_90d,
+  a.crash_users_90d,
+  ROUND(a.crash_free_30d / 100, 4) AS crash_free_users_30d,
+  a.crashes_30d,
+  a.crash_users_30d,
+  a.anrs_90d,
+  a.anr_users_90d,
+  a.anrs_30d,
+  a.anr_users_30d,
+  ROUND(a.anr_free_90d / 100, 4) AS anr_free_users_90d,
+  ROUND(a.anr_free_30d / 100, 4) AS anr_free_users_30d,
+
+  ROUND(c.crash_free_90d / 100, 4) AS connect_crash_free_users_90d,
+  c.crashes_90d AS connect_crashes_90d,
+  c.crash_users_90d AS connect_crash_users_90d,
+  ROUND(c.crash_free_30d / 100, 4) AS connect_crash_free_users_30d,
+  c.crashes_30d AS connect_crashes_30d,
+  c.crash_users_30d AS connect_crash_users_30d,
+  ROUND(c.anr_free_90d / 100, 4) AS connect_anr_free_users_90d,
+  c.anrs_90d AS connect_anrs_90d,
+  c.anr_users_90d AS connect_anr_users_90d,
+  ROUND(c.anr_free_30d / 100, 4) AS connect_anr_free_users_30d,
+  c.anrs_30d AS connect_anrs_30d,
+  c.anr_users_30d AS connect_anr_users_30d,
+
+  ROUND(i.crash_free_90d / 100, 4) AS internal_crash_free_users_90d,
+  i.crashes_90d AS internal_crashes_90d,
+  i.crash_users_90d AS internal_crash_users_90d,
+  ROUND(i.crash_free_30d / 100, 4) AS internal_crash_free_users_30d,
+  i.crashes_30d AS internal_crashes_30d,
+  i.crash_users_30d AS internal_crash_users_30d,
+  ROUND(i.anr_free_90d / 100, 4) AS internal_anr_free_users_90d,
+  i.anrs_90d AS internal_anrs_90d,
+  i.anr_users_90d AS internal_anr_users_90d,
+  ROUND(i.anr_free_30d / 100, 4) AS internal_anr_free_users_30d,
+  i.anrs_30d AS internal_anrs_30d,
+  i.anr_users_30d AS internal_anr_users_30d,
+
+  a.window_end AS data_through,
+
+  ROUND(n.crash_free_90d / 100, 4) AS commcare_crash_free_users_90d,
+  n.crashes_90d AS commcare_crashes_90d,
+  n.crash_users_90d AS commcare_crash_users_90d,
+  ROUND(n.crash_free_30d / 100, 4) AS commcare_crash_free_users_30d,
+  n.crashes_30d AS commcare_crashes_30d,
+  n.crash_users_30d AS commcare_crash_users_30d,
+  ROUND(n.anr_free_90d / 100, 4) AS commcare_anr_free_users_90d,
+  n.anrs_90d AS commcare_anrs_90d,
+  n.anr_users_90d AS commcare_anr_users_90d,
+  ROUND(n.anr_free_30d / 100, 4) AS commcare_anr_free_users_30d,
+  n.anrs_30d AS commcare_anrs_30d,
+  n.anr_users_30d AS commcare_anr_users_30d,
+
+  ROUND(d.crash_free_90d / 100, 4) AS all_by_device_crash_free_users_90d,
+  d.crashes_90d AS all_by_device_crashes_90d,
+  d.crash_users_90d AS all_by_device_crash_users_90d,
+  ROUND(d.crash_free_30d / 100, 4) AS all_by_device_crash_free_users_30d,
+  d.crashes_30d AS all_by_device_crashes_30d,
+  d.crash_users_30d AS all_by_device_crash_users_30d,
+  ROUND(d.anr_free_90d / 100, 4) AS all_by_device_anr_free_users_90d,
+  d.anrs_90d AS all_by_device_anrs_90d,
+  d.anr_users_90d AS all_by_device_anr_users_90d,
+  ROUND(d.anr_free_30d / 100, 4) AS all_by_device_anr_free_users_30d,
+  d.anrs_30d AS all_by_device_anrs_30d,
+  d.anr_users_30d AS all_by_device_anr_users_30d
+FROM pivoted a
+LEFT JOIN pivoted c ON c.run_date = a.run_date AND c.user_segment = 'connect'
+LEFT JOIN pivoted i ON i.run_date = a.run_date AND i.user_segment = 'connect-demo'
+LEFT JOIN pivoted n ON n.run_date = a.run_date AND n.user_segment = 'non-connect'
+LEFT JOIN pivoted d ON d.run_date = a.run_date AND d.user_segment = 'all-by-device'
+WHERE a.user_segment = 'all-by-installation';

@@ -249,6 +249,35 @@ It also inherits whatever junk is in `application.display_version`: `CommCare2.6
 `CommCare_2.64.1` show up alongside `2.64.1` as separate versions, each with a couple of
 users. Worth filtering on `peak_total_users` before charting.
 
+### view_commcare_crashes_sheet
+
+The source for the connected sheet in the **CommCare Mobile Metrics** spreadsheet, which
+replaces the hand-kept **CommCare Crashes** tab. One row per `run_date`.
+
+The first thirteen columns match that tab column for column (`date` through
+`anr_users_30d`), taken from `all-by-installation` because it is the console-comparable
+measure. `anr_free_users_90d` / `_30d` follow; the tab never had them because the console
+shows no ANR-free tile. Then the same twelve figures again with `connect_` and
+`internal_` prefixes, from the `connect` and `connect-demo` segments. After
+`data_through` come the same twelve with a `commcare_` prefix, from `non-connect`: every
+device that is not on Connect. Then twelve more with an `all_by_device_` prefix, from
+`all-by-device`. These sit at the end so the columns the sheet already reads keep their
+positions.
+
+The breakdown segments and `all-by-device` all count by `device_id`, so they reconcile:
+the users and affected users of `commcare_`, `connect_` and `internal_` add up to
+`all_by_device_`, and its percentage is their user-weighted average. The headline
+(installation-based) columns do not, and read about half a point higher. Chart the
+breakdown against `all_by_device_`, not against the headline columns.
+
+Two differences from the hand-kept tab. Percentages are fractions (`0.9421`) so they
+format as percent in Sheets, and counts are exact rather than the console's rounded
+`86K`. `data_through` is `window_end`, the last day of data the row covers, two days
+behind `date`.
+
+The Connect and internal columns count by `device_id`, not installation, so compare them
+with each other rather than with the headline columns.
+
 The other views deliberately read only the `'all'` version rows. Per-version analysis stays in
 `crash_usage_history`, where `app_version` is a proper dimension rather than a column
 per value.

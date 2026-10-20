@@ -17,8 +17,9 @@ days old, which is why this is separate.
 | `release_health_daily.sql` | one row per day x version (release or baseline) x segment: device-days and the device-days, events and so on for crashes, ANRs and non-fatals |
 | `release_health_upgraders.sql` | the same counts for devices that upgraded, before and after their own upgrade, and for devices that stayed on the baseline, before and after the rollout started |
 | `release_health_issues.sql` | one row per Crashlytics issue seen on the release since the rollout started: devices and events on the release and the baseline, beta events, and events on any other version in the export |
+| `release_health_ga4_failures.sql` | one row per day x version x segment x failure category, from release_start on: device-days, attempts and the device-days with one, failures and the device-days with one, for the failures the app reports to GA4 |
 
-All three write nothing and compute no rates. Each stands alone as a BigQuery saved query.
+All four write nothing and compute no rates. Each stands alone as a BigQuery saved query.
 
 ## Inputs
 
@@ -32,7 +33,15 @@ Each file opens with the same `DECLARE` block:
 | `data_lag_days` | how far `end_date` sits behind today. The Crashlytics export lands a day or two late |
 | `pre_release_days` | how far before `release_start` the window opens, for the before half of the upgraders check |
 
-The skill's runner rewrites these defaults. In the console, edit them by hand.
+The skill's runner rewrites these defaults. In the console, edit them by hand. From a
+shell, pipe the file to bq on stdin, because a file opening with `--` reads as a flag:
+
+```
+bq query --use_legacy_sql=false --project_id=commcare-a57e4 < release_health_ga4_failures.sql
+```
+
+The GA4 failures query reads events only from `release_start` on, and uses
+`pre_release_days` only to decide segments the same way as the other files.
 
 `end_date` is also capped at the last day `mobile_metrics.ga_device_day` holds, and every
 file asserts that at least one complete day exists after `release_start`. On the first day
@@ -64,6 +73,56 @@ Crashlytics export, about 90 days. Spellings that end in the release version, li
 `CommCare2.65.0`, count as the release. Events on the release before `release_start` are
 reported as `prerelease_events` (beta) rather than as another version.
 
+## GA4 failures
+
+`release_health_ga4_failures.sql` counts the failures CommCare logs to GA4 through
+`FirebaseAnalyticsUtil`, on the same versions, days and segments as the daily query. Every
+device-day appears under every category, so a category with no events still has its
+device-days and a zero. Rates are failures per 1,000 device-days, and failures per attempt
+where the app also logs successes.
+
+| Category | GA4 event | Failure when | Attempts |
+|---|---|---|---|
+| `sync` | `sync_attempt` | `success` = 0 | every event |
+| `sync_non_network` | `sync_attempt` | `success` = 0 and `reason` is not `no_connection`, `unreachable_host`, `connection_timeout`, `captive_portal` or `cancelled` | every event |
+| `form_upload` | `form_upload_attempt` | `result` is not `FULL_SUCCESS` | every event |
+| `form_upload_non_network` | `form_upload_attempt` | `result` is not `FULL_SUCCESS`, `TRANSPORT_FAILURE` or `CAPTIVE_PORTAL` | every event |
+| `form_quarantine` | `form_quarantine_event` | `item_id` is not `manual-quarantine` | none |
+| `corrupt_app_state` | `common_commcare_event` | `item_id` = `corrupt_app_state` | none |
+| `update_stage_failure` | `common_commcare_event` | `item_id` = `stage_update_failure` | none |
+| `update_reset` | `common_commcare_event` | `item_id` = `update_reset` | none |
+| `in_app_update` | `in_app_update_event` | `value` = 0 | every event |
+| `personalid_config_failure` | `personal_id_configuration_failure` | every event | none |
+| `otp_request` | `otp_requested`, `event_type` `request` or `request_email` | `outcome` = `failure` | every event |
+| `otp_verify` | `otp_requested`, `event_type` `verify` or `verify_email` | `outcome` = `failure` | every event |
+| `personalid_recovery` | `personalid_account_recovered` | `value` = 0 | every event |
+| `connect_api_jobs` | `ccc_api_jobs` | `ccc_api_success` = 0 | every event |
+| `connect_api_start_learning` | `ccc_api_start_learning` | `ccc_api_success` = 0 | every event |
+| `connect_api_claim_job` | `ccc_api_claim_job` | `ccc_api_success` = 0 | every event |
+| `connect_api_payment_confirmation` | `ccc_api_payment_confirmation` | `ccc_api_success` = 0 | every event |
+| `connect_api_learn_progress` | `ccc_api_learn_progress` | `ccc_api_success` = 0 | none |
+| `connect_api_delivery_progress` | `ccc_api_delivery_progress` | `ccc_api_success` = 0 | none |
+
+Some things to know when reading them:
+
+- **The denominator is the device-days GA4 saw**, not the GA4-or-Crashlytics union in
+  `release_health_daily.sql`. Only GA4 sends these events.
+- **Categories with no attempts** log only failures, or log successes unevenly. The app
+  logs a learn progress success only once the assessment is passed, and a delivery
+  progress success once per milestone, so their successes mean nothing.
+- **One form upload event covers a whole batch** of forms and carries its worst result.
+  A batch with nothing to send logs `FULL_SUCCESS`.
+- **The `no_connection` sync failure is logged without trying**, when the user presses
+  sync with no network. `sync_non_network` leaves out that and the other network
+  reasons, so it moves with the release rather than with the user's signal.
+- **OTP verify failures include wrong codes typed by the user.** Compare the rate, not
+  the count.
+- **Connect and PersonalID categories are near zero for `non-connect`** by construction.
+
+The parameter keys come from `CCAnalyticsEvent`, `CCAnalyticsParam` and
+`AnalyticsParamValue` in `commcare-android`'s `org.commcare.google.services.analytics`.
+When the app changes an event, change the table and the query together.
+
 ## Reading the numbers
 
 **The same-day comparison and the same-device check can disagree, and the second is the
@@ -86,3 +145,12 @@ detect.
 
 About 38 MB per file per run, so effectively free. The issues query reads every day in the
 Crashlytics export, but only a few columns.
+
+The GA4 failures query is the exception. It reads the raw GA4 export, about 4 GB a day
+from `release_start` on: an upper bound of 37 GB a week into a rollout and 58 GB after two,
+or roughly $0.20 to $0.35 a run. It never reads `user_properties`, which would triple
+that, by taking each app instance's device_id from `mobile_metrics.ga_device_day`.
+
+A dry run of any of these files as a script does not price the final query: all four
+report the same 38,547,416 bytes. Those GA4 figures come from dry runs of the final query
+with the variables written in as literals.

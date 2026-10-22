@@ -18,8 +18,9 @@ days old, which is why this is separate.
 | `release_health_upgraders.sql` | the same counts for devices that upgraded, before and after their own upgrade, and for devices that stayed on the baseline, before and after the rollout started |
 | `release_health_issues.sql` | one row per Crashlytics issue seen on the release since the rollout started: devices and events on the release and the baseline, beta events, and events on any other version in the export |
 | `release_health_ga4_failures.sql` | one row per day x version x segment x failure category, from release_start on: device-days, attempts and the device-days with one, failures and the device-days with one, for the failures the app reports to GA4 |
+| `release_health_versions.sql` | devices per day x version x segment for every version, and distinct devices per version over the last `week_days` days (grain `week`); a NULL `app_version` row counts each device once across all versions. Same device definition as the daily query, with release days before release_start left out |
 
-All four write nothing and compute no rates. Each stands alone as a BigQuery saved query.
+All five write nothing and compute no rates. Each stands alone as a BigQuery saved query.
 
 ## Inputs
 

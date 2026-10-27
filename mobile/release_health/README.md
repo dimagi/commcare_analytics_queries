@@ -94,7 +94,11 @@ where the app also logs successes.
 | `update_reset` | `common_commcare_event` | `item_id` = `update_reset` | none |
 | `in_app_update` | `in_app_update_event` | `value` = 0 | every event |
 | `personalid_config_failure` | `personal_id_configuration_failure` | every event | none |
-| `otp_request` | `otp_requested`, `event_type` `request` or `request_email` | `outcome` = `failure` | every event |
+| `otp_request` | `otp_requested`, `event_type` `request` or `request_email`, Firebase handoffs left out | `outcome` = `failure` | every event but a handoff |
+| `otp_request_firebase` | the same, `method` = `firebase` | `outcome` = `failure` | every event but a handoff |
+| `otp_request_personalid` | the same, `method` = `personal_id` | `outcome` = `failure` | every event |
+| `otp_request_email` | the same, `method` = `email` | `outcome` = `failure` | every event |
+| `otp_request_firebase_handoff` | `otp_requested`, `event_type` `request`, `method` = `firebase` | a failure handed off to PersonalID SMS | every event |
 | `otp_verify` | `otp_requested`, `event_type` `verify` or `verify_email` | `outcome` = `failure` | every event |
 | `personalid_recovery` | `personalid_account_recovered` | `value` = 0 | every event |
 | `connect_api_jobs` | `ccc_api_jobs` | `ccc_api_success` = 0 | every event |
@@ -118,6 +122,12 @@ Some things to know when reading them:
   reasons, so it moves with the release rather than with the user's signal.
 - **OTP verify failures include wrong codes typed by the user.** Compare the rate, not
   the count.
+- **A failed Firebase phone request hands off to PersonalID SMS**, which logs a request
+  of its own straight away. A Firebase failure followed within `handoff_seconds` by a
+  PersonalID request is that handoff, as in `personalid/otp/otp_failure_breakdown.sql`.
+  `otp_request` and the method rows leave it out, so each request counts once by the
+  outcome the user saw and the three method rows add up to `otp_request`. Counting it
+  took 2.64.1's request failure rate from 34% to 44% the week of 2026-10-13.
 - **Connect and PersonalID categories are near zero for `non-connect`** by construction.
 
 The parameter keys come from `CCAnalyticsEvent`, `CCAnalyticsParam` and

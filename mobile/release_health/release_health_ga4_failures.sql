@@ -7,6 +7,9 @@ DECLARE baseline_version STRING DEFAULT '2.64.1';
 DECLARE release_start DATE DEFAULT DATE '2026-10-20';
 DECLARE data_lag_days INT64 DEFAULT 2;
 DECLARE pre_release_days INT64 DEFAULT 14;
+-- A Firebase OTP request that fails is followed by a PersonalID SMS request within a
+-- second or two. Larger gaps are a user pressing resend.
+DECLARE handoff_seconds INT64 DEFAULT 120;
 DECLARE end_date DATE DEFAULT DATE_SUB(CURRENT_DATE(), INTERVAL data_lag_days DAY);
 DECLARE start_date DATE;
 
@@ -99,12 +102,15 @@ events AS (
     event_date,
     i.device_key,
     app_version,
+    user_pseudo_id,
+    e.event_timestamp,
     e.event_name,
     e.event_params
   FROM (
     SELECT
       DATE(TIMESTAMP_MICROS(event_timestamp)) AS event_date,
       user_pseudo_id,
+      event_timestamp,
       app_info.version AS app_version,
       event_name,
       event_params
@@ -123,12 +129,35 @@ events AS (
   JOIN instance_devices i USING (event_date, user_pseudo_id, app_version)
 ),
 
+-- Same handoff rule as personalid/otp/otp_failure_breakdown.sql. Partitioning by
+-- event_name sequences the OTP events among themselves, and reading events once here
+-- keeps BigQuery from scanning the GA4 export twice.
+sequenced AS (
+  SELECT
+    *,
+    IFNULL(
+      event_name = 'otp_requested'
+      AND otp_type = 'request' AND otp_method = 'firebase' AND otp_outcome = 'failure'
+      AND LEAD(otp_type) OVER w = 'request' AND LEAD(otp_method) OVER w = 'personal_id'
+      AND LEAD(event_timestamp) OVER w - event_timestamp < handoff_seconds * 1000000,
+      FALSE) AS is_fallback_handoff
+  FROM (
+    SELECT
+      *,
+      IF(event_name = 'otp_requested', str_param(event_params, 'event_type'), NULL) AS otp_type,
+      IF(event_name = 'otp_requested', str_param(event_params, 'method'), NULL) AS otp_method,
+      IF(event_name = 'otp_requested', str_param(event_params, 'outcome'), NULL) AS otp_outcome
+    FROM events
+  )
+  WINDOW w AS (PARTITION BY user_pseudo_id, event_name ORDER BY event_timestamp)
+),
+
 -- One row per event and category it counts towards. is_attempt is NULL for
 -- categories with no attempt count: those events are only ever failures, or the
 -- app logs success too unevenly for successes to mean anything.
 classified AS (
   SELECT event_date, device_key, app_version, category, is_attempt, is_failure
-  FROM events,
+  FROM sequenced,
   UNNEST(
     CASE event_name
       WHEN 'sync_attempt' THEN [
@@ -164,15 +193,31 @@ classified AS (
       WHEN 'personal_id_configuration_failure' THEN [
         STRUCT('personalid_config_failure' AS category, CAST(NULL AS BOOL) AS is_attempt, TRUE AS is_failure)
       ]
-      WHEN 'otp_requested' THEN [
-        STRUCT(
-          CASE
-            WHEN str_param(event_params, 'event_type') IN ('request', 'request_email') THEN 'otp_request'
-            WHEN str_param(event_params, 'event_type') IN ('verify', 'verify_email') THEN 'otp_verify'
-          END AS category,
-          TRUE AS is_attempt,
-          str_param(event_params, 'outcome') = 'failure' AS is_failure)
-      ]
+      -- A failed Firebase phone request hands off to PersonalID SMS, which logs its
+      -- own request, so otp_request and the method rows leave the handoff out and
+      -- count each request once, by the outcome the user saw.
+      -- otp_request_firebase_handoff counts the handoffs per Firebase request.
+      WHEN 'otp_requested' THEN
+        CASE
+          WHEN otp_type IN ('verify', 'verify_email') THEN [
+            STRUCT('otp_verify' AS category, TRUE AS is_attempt, otp_outcome = 'failure' AS is_failure)
+          ]
+          WHEN is_fallback_handoff THEN [
+            STRUCT('otp_request_firebase_handoff' AS category, TRUE AS is_attempt, TRUE AS is_failure)
+          ]
+          WHEN otp_type IN ('request', 'request_email') THEN [
+            STRUCT('otp_request' AS category, TRUE AS is_attempt, otp_outcome = 'failure' AS is_failure),
+            STRUCT(
+              CASE otp_method
+                WHEN 'firebase' THEN 'otp_request_firebase'
+                WHEN 'personal_id' THEN 'otp_request_personalid'
+                WHEN 'email' THEN 'otp_request_email'
+              END,
+              TRUE,
+              otp_outcome = 'failure'),
+            STRUCT(IF(otp_method = 'firebase', 'otp_request_firebase_handoff', NULL), TRUE, FALSE)
+          ]
+        END
       WHEN 'personalid_account_recovered' THEN [
         STRUCT('personalid_recovery' AS category, TRUE AS is_attempt, int_param(event_params, 'value') = 0 AS is_failure)
       ]
@@ -215,6 +260,10 @@ categories AS (
     ('in_app_update', TRUE),
     ('personalid_config_failure', FALSE),
     ('otp_request', TRUE),
+    ('otp_request_firebase', TRUE),
+    ('otp_request_personalid', TRUE),
+    ('otp_request_email', TRUE),
+    ('otp_request_firebase_handoff', TRUE),
     ('otp_verify', TRUE),
     ('personalid_recovery', TRUE),
     ('connect_api_jobs', TRUE),

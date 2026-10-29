@@ -47,12 +47,34 @@ per_issue AS (
     ARRAY_AGG(app_version ORDER BY event_timestamp LIMIT 1)[OFFSET(0)] AS first_version
   FROM events
   GROUP BY issue_id
+),
+
+-- A release device that hit the issue on another version too brought it along,
+-- so only the rest are evidence against the release.
+other_version_devices AS (
+  SELECT DISTINCT issue_id, device_key
+  FROM events
+  WHERE NOT ENDS_WITH(IFNULL(app_version, ''), release_version)
+),
+
+fresh AS (
+  SELECT r.issue_id, COUNT(*) AS release_devices_fresh
+  FROM (
+    SELECT DISTINCT issue_id, device_key
+    FROM events
+    WHERE app_version = release_version AND event_date >= release_start AND device_key IS NOT NULL
+  ) r
+  LEFT JOIN other_version_devices o USING (issue_id, device_key)
+  WHERE o.device_key IS NULL
+  GROUP BY r.issue_id
 )
 
 SELECT
-  *,
+  p.*,
+  IFNULL(f.release_devices_fresh, 0) AS release_devices_fresh,
   release_start,
   end_date
-FROM per_issue
+FROM per_issue p
+LEFT JOIN fresh f USING (issue_id)
 WHERE release_events > 0
 ORDER BY release_devices DESC, release_events DESC;

@@ -74,6 +74,11 @@ Crashlytics export, about 90 days. Spellings that end in the release version, li
 `CommCare2.65.0`, count as the release. Events on the release before `release_start` are
 reported as `prerelease_events` (beta) rather than as another version.
 
+**Fresh devices** (`release_devices_fresh`) are the release devices that have no event for
+the issue on any other version in the export. A device that hit the issue on 2.64.1 and
+again after upgrading brought it with it, so it says nothing about the release. The rates
+report's existing-issue hold counts only fresh devices and shows both counts.
+
 ## GA4 failures
 
 `release_health_ga4_failures.sql` counts the failures CommCare logs to GA4 through

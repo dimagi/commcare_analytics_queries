@@ -16,11 +16,14 @@ days old, which is why this is separate.
 |---|---|
 | `release_health_daily.sql` | one row per day x version (release or baseline) x segment: device-days and the device-days, events and so on for crashes, ANRs and non-fatals |
 | `release_health_upgraders.sql` | the same counts for devices that upgraded, before and after their own upgrade, and for devices that stayed on the baseline, before and after the rollout started |
-| `release_health_issues.sql` | one row per Crashlytics issue seen on the release since the rollout started: devices and events on the release and the baseline, beta events, and events on any other version in the export |
+| `release_health_issues.sql` | one row per Crashlytics issue seen on the release since the rollout started: devices and events on the release and the baseline, beta events, events on any other version in the export, and the release devices by project and model (`release_scopes`) |
 | `release_health_ga4_failures.sql` | one row per day x version x segment x failure category, from release_start on: device-days, attempts and the device-days with one, failures and the device-days with one, for the failures the app reports to GA4 |
 | `release_health_versions.sql` | devices per day x version x segment for every version, and distinct devices per version over the last `week_days` days (grain `week`); a NULL `app_version` row counts each device once across all versions. Same device definition as the daily query, with release days before release_start left out |
 
 All five write nothing and compute no rates. Each stands alone as a BigQuery saved query.
+
+`known_issues.toml` is the team's list of issues already judged not to be regressions,
+and `known_issues.py` applies it to the issues query's rows (see [Known issues](#known-issues)).
 
 ## Inputs
 
@@ -78,6 +81,68 @@ reported as `prerelease_events` (beta) rather than as another version.
 the issue on any other version in the export. A device that hit the issue on 2.64.1 and
 again after upgrading brought it with it, so it says nothing about the release. The rates
 report's existing-issue hold counts only fresh devices and shows both counts.
+
+**Release scopes** (`release_scopes`) split each issue's release devices by the
+Crashlytics `domain` custom key (the CommCare project) and `device.manufacturer` and
+`device.model`, each device counted once, under the project and model of its latest
+release event for the issue: `devices` and `fresh_devices` per combination. They add up
+to `release_devices` and `release_devices_fresh`. The known-issues list reads them.
+
+## Known issues
+
+`known_issues.toml` lists Crashlytics issues that someone looked into during a release
+and judged not to be a regression: an old crash under a new name, one project's devices
+that upgraded early, a fault on one device model. It lives here so the team shares one
+list, and entries carry over from release to release. Each `[[issue]]` holds:
+
+| Field | Required | Meaning |
+|---|---|---|
+| `issue_id` | yes | the Crashlytics issue id, 32 hex characters, as in the console URL and the issues query |
+| `title` | yes | a short name for people; nothing matches on it |
+| `reason` | yes | why it is not a regression, with the evidence |
+| `checked_on` | yes | the day it was last checked, a TOML date (`2026-10-28`, no quotes) |
+| `checked_release` | yes | the release it was checked on, e.g. `2.65.0` |
+| `error_type` | no | `FATAL`, `ANR` or `NON_FATAL` |
+| `projects` | no | the CommCare projects (Crashlytics `domain`) the judgment covers |
+| `device_models` | no | the device models it covers, e.g. `SM-X115` or `Tecno BF6` |
+| `same_as` | no | the older issue this one is, when Crashlytics filed an old crash under a new name |
+| `expected_fix_release` | no | the release expected to fix it |
+| `fixing_pr` | no | the pull request that fixes it, which needs `expected_fix_release` |
+
+**Scope.** With neither `projects` nor `device_models`, an entry covers every device.
+With both, a device must match both. Matching ignores case, spaces and punctuation, and
+a model matches either `device.model` or the manufacturer and model together, so
+`Tecno BF6` matches a `TECNO BF6` model and a `BF6` model made by `TECNO`. A device whose
+report carries no `domain` is outside any entry that lists projects.
+
+**What it does to a report.** `known_issues.py` tags each issues row the list holds:
+
+- **Known**, with its reason, when no release device outside the scope hit the issue
+  (`exempt`). The report shows it and does not hold on it.
+- **Known, but hit outside its scope** when some did. It reports how many release devices
+  outside the scope hit it, and how many of those are fresh, so the hold rules can run on
+  those devices alone. A row without `release_scopes`, such as a Crashlytics API issue,
+  cannot show this, so a scoped entry there is never exempt.
+- **Recheck** (`stale`) when the entry was last checked two or more feature releases ago
+  (checked on 2.65.x, flagged from 2.67.0 on; hotfixes do not count). The list as a whole
+  reports its stale entries too, shown on the release or not.
+- **Still showing on or after its fix release** (`past_expected_fix`) when the issue has
+  events on `expected_fix_release` or later.
+
+```
+python known_issues.py --validate
+python known_issues.py <issues.json> --release 2.65.0 [--json]
+```
+
+The first checks the list after an edit. The second takes the issues query's rows as bq
+prints them in JSON and prints the tags as a markdown table, or as JSON for a report to
+read. `python -m pytest mobile/release_health` runs the tests.
+
+**Keeping it current.** Add an entry when a release check finds an issue that is not a
+regression, with the evidence in `reason`. When you check it again on a later release,
+move `checked_on` and `checked_release` and update the reason. When a PR fixing it
+merges, set `fixing_pr` and the next planned release as `expected_fix_release`. Remove an
+entry once its fix release shows the issue gone.
 
 ## GA4 failures
 
@@ -160,7 +225,8 @@ detect.
 ## Cost
 
 About 38 MB per file per run, so effectively free. The issues query reads every day in the
-Crashlytics export, but only a few columns.
+Crashlytics export, but only a few columns: its final query read about 2.4 GB on 2026-11-02,
+under two cents, of which the project and model columns for `release_scopes` add about 0.1 GB.
 
 The GA4 failures query is the exception. It reads the raw GA4 export, about 4 GB a day
 from `release_start` on: an upper bound of 37 GB a week into a rollout and 58 GB after two,

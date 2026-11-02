@@ -1,0 +1,99 @@
+# Release-watch known issues: Crashlytics issues already judged not to be regressions.
+# The fields are described in README.md ("Known issues"). Check a change with
+#   python known_issues.py --validate
+
+[[issue]]
+issue_id = "641f6e6c8eb4a2e0a415763b48ba790c"
+title = "StorageBackedTreeRoot.buildReferencesFromFetchResults NullPointerException"
+error_type = "FATAL"
+projects = ["givedirectly-rwanda"]
+reason = "One fleet's devices upgraded early. Every 2.65.0 device with it was in givedirectly-rwanda, mostly Samsung SM-A175F, the project and model behind 19 of the 22 baseline devices; first seen 2.52.1, and core has no case storage change since 2.64.0."
+checked_on = 2026-10-23
+checked_release = "2.65.0"
+
+[[issue]]
+issue_id = "b0ffda4b0e134b5806893ac503c2c395"
+title = "HybridFileBackedSqlStorage.writeExternalizableToStream OutOfMemoryError"
+error_type = "FATAL"
+projects = ["monitoring-and-evaluati-3"]
+device_models = ["SM-X115"]
+reason = "Samsung SM-X115 tablets in monitoring-and-evaluati-3 hit it on every version since 2.57.0, 2.63 and 2.64.1 included. No storage or serialization change in android or core for 2.65."
+checked_on = 2026-10-28
+checked_release = "2.65.0"
+
+[[issue]]
+issue_id = "45b735e1127e95000e33565a1aac2748"
+title = "CommCareSession.getNeededDatum: the current session has no valid entry"
+error_type = "FATAL"
+reason = "Both call paths (the map screen opening with an empty session, and a case list result after a session timeout) go back to 2.63 and hit 58 devices on 2.64.1 since 2026-09-01. Neither changed in 2.65."
+checked_on = 2026-10-28
+checked_release = "2.65.0"
+
+[[issue]]
+issue_id = "4be38325ff2c41f28a9fc67b54ff5209"
+title = "PersonalIdApiHandler.handleErrorCodeIfPresent: API call failed due to missing data"
+error_type = "NON_FATAL"
+reason = "An old crash under a new name. PersonalIdOrConnectApiErrorHandler's default branch throws on MISSING_DATA_ERROR in 2.64.1 too; the class moved packages in 2.65, so Crashlytics files it as a new issue."
+same_as = "PersonalIdOrConnectApiErrorHandler.handleErrorCodeIfPresent (2.64.1 and earlier)"
+checked_on = 2026-10-28
+checked_release = "2.65.0"
+
+[[issue]]
+issue_id = "975ee064c9dae904871356692091fd3b"
+title = "SqlStorage.getMetaDataForRecord ANR"
+error_type = "ANR"
+projects = ["givedirectly-rwanda"]
+reason = "All 3 fresh release devices were in givedirectly-rwanda, the project behind 5 of the 8 baseline devices: a project that upgraded early, not a regression."
+checked_on = 2026-10-29
+checked_release = "2.65.0"
+
+[[issue]]
+issue_id = "1546b5e36dee3248403255501c7807c3"
+title = "DatabaseConnectOpenHelper.getWritableDatabase ANR"
+error_type = "ANR"
+reason = "Stalls in SQLCipher's connection open on low-end ARMv7 phones and repeats on the same device across days, first seen 2.63.4, so it is not the new Connect DB 28-to-29 migration."
+checked_on = 2026-10-27
+checked_release = "2.65.0"
+
+[[issue]]
+issue_id = "697ef2f91f397dd6eb744e4c6dfae08c"
+title = "CaseChildElement.setCaseProperties ANR"
+error_type = "ANR"
+projects = ["echis-niger-6", "wv-sahel-nigeria", "sistemabio"]
+reason = "Its release devices were in echis-niger-6, wv-sahel-nigeria and sistemabio, which all hit it on 2.64.1: projects that upgraded early."
+checked_on = 2026-10-27
+checked_release = "2.65.0"
+
+[[issue]]
+issue_id = "5dc2565587e2de2e9e3ef7abdc2c2bf1"
+title = "CustomProgressDialog.updateTextView NullPointerException"
+error_type = "FATAL"
+projects = ["connect-kmc-ug-nama"]
+reason = "Every 2.65.0 sample is a Connect learn app launch in connect-kmc-ug-nama failing suite validation before ConnectAppLaunchController updates the dialog. That path changed only in imports since 2.64.1, so the trigger is the project's app build."
+checked_on = 2026-11-02
+checked_release = "2.65.0"
+
+[[issue]]
+issue_id = "a984b1bf5c27e964370541b4e9b9ac7a"
+title = "MessageActivity.onCreate BadParcelableException"
+error_type = "FATAL"
+reason = "State restored at session start; first seen 2.54 and the file is unchanged in 2.65. 3 release devices in 3 projects."
+checked_on = 2026-10-30
+checked_release = "2.65.0"
+
+[[issue]]
+issue_id = "e365d64e56446cd91f4e70a75c2ff02c"
+title = "AesKeyStoreHandler.generateAesKey: Keystore not initialized"
+error_type = "FATAL"
+device_models = ["Tecno BF6"]
+reason = "A Tecno/Infinix keystore fault. Every 2.65.0 user with it is on a Tecno BF6, one fleet that upgraded early; the keystore code is unchanged in 2.65."
+checked_on = 2026-11-02
+checked_release = "2.65.0"
+
+[[issue]]
+issue_id = "2cb8170e5c1e4f6048687789f35211a2"
+title = "CommCareActivity.onPause BadTokenException"
+error_type = "FATAL"
+reason = "First seen 2.63.4, and 3 release devices against 3 on the baseline. CommCareActivity changed in 2.65 only by making a field private final."
+checked_on = 2026-11-02
+checked_release = "2.65.0"

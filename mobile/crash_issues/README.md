@@ -43,7 +43,7 @@ type.
 | `ranking` | `all`, ranked by `devices`, or `connect`, ranked by `connect_devices` over the issues that reached a Connect device |
 | `issue_rank` | 1 for the issue on the most devices. Ties go to more events, then to `issue_id` |
 | `issue_id`, `error_type`, `issue_title` | the Crashlytics issue. `error_type` is `FATAL` (a crash) or `ANR` |
-| `devices`, `events`, `installations` | distinct devices, events and Crashlytics installations over the window. `installations` is the closest to the console's user count |
+| `devices`, `events`, `installations` | distinct devices, events and Crashlytics installations over the window. Both run higher than the console's user count, up to 2.7x (see Checking it) |
 | `connect_devices`, `connect_demo_devices`, `non_connect_devices` | `devices` by segment. They add up to `devices` |
 | `unmatched_devices` | of `non_connect_devices`, those GA4 never saw over the window |
 | `connect_events` | events on Connect devices, the tie-break for the Connect ranking |
@@ -106,5 +106,9 @@ table, and reads `custom_keys` for all 90 days: 1.76 GB instead of 520 MB.
 
 ## Checking it
 
-Its top five FATAL issues for a 7 day window should match the Crashlytics console's top
-five by users for the same 7 days, CommCare app, all versions, crashes only.
+Checked on 2026-11-05 against the Crashlytics API's top issues for 2026-10-28 to 11-03,
+CommCare app, all versions, crashes only. Events match the console: two of the top five
+exactly, the other three within 7%. Devices and installations do not: they run 1.1x to
+2.7x above the console's users (ExtUtil.readString: 80 installations, 30 users), and
+distinct `user.id` in the export is close to installations too, so that isn't the cause.
+Until the gap is explained, read `devices` as a ranking, not as the console's user count.

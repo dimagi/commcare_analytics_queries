@@ -3,6 +3,8 @@
 WITH events AS (
   SELECT
     PARSE_DATE('%Y%m%d', _TABLE_SUFFIX) AS export_date,
+    user_pseudo_id,
+    event_timestamp,
     CONCAT('commcare_', (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'device_id')) AS device_id,
     IFNULL(app_info.version, 'unknown') AS app_version,
     event_name,
@@ -13,15 +15,29 @@ WITH events AS (
     (SELECT p.value.string_value FROM UNNEST(event_params) p WHERE p.key = 'result') AS result,
     (SELECT p.value.string_value FROM UNNEST(event_params) p WHERE p.key = 'item_id') AS item_id,
     (SELECT p.value.string_value FROM UNNEST(event_params) p WHERE p.key = 'event_type') AS event_type,
-    (SELECT p.value.string_value FROM UNNEST(event_params) p WHERE p.key = 'outcome') AS outcome
+    (SELECT p.value.string_value FROM UNNEST(event_params) p WHERE p.key = 'outcome') AS outcome,
+    (SELECT p.value.string_value FROM UNNEST(event_params) p WHERE p.key = 'method') AS method
   FROM `commcare-a57e4.analytics_153906101.events_intraday_*`
   WHERE _TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', @start_date) AND FORMAT_DATE('%Y%m%d', @end_date)
     AND (SELECT up.value.string_value FROM UNNEST(user_properties) up WHERE up.key = 'user_cid') = @user_cid
 ),
 
+sequenced AS (
+  SELECT
+    *,
+    IFNULL(
+      event_name = 'otp_requested'
+      AND event_type = 'request' AND method = 'firebase' AND outcome = 'failure'
+      AND LEAD(event_type) OVER w = 'request' AND LEAD(method) OVER w = 'personal_id'
+      AND LEAD(event_timestamp) OVER w - event_timestamp < 120 * 1000000,
+      FALSE) AS is_fallback_handoff
+  FROM events
+  WINDOW w AS (PARTITION BY user_pseudo_id, event_name ORDER BY event_timestamp)
+),
+
 classified AS (
   SELECT export_date, device_id, app_version, c.category, c.is_attempt, c.is_failure
-  FROM events,
+  FROM sequenced,
   UNNEST(
     ARRAY_CONCAT(
       [STRUCT('all_events' AS category, CAST(NULL AS BOOL) AS is_attempt, CAST(NULL AS BOOL) AS is_failure)],
@@ -59,15 +75,28 @@ classified AS (
         WHEN 'personal_id_configuration_failure' THEN [
           STRUCT('personalid_config_failure' AS category, CAST(NULL AS BOOL) AS is_attempt, TRUE AS is_failure)
         ]
-        WHEN 'otp_requested' THEN [
-          STRUCT(
-            CASE
-              WHEN event_type IN ('request', 'request_email') THEN 'otp_request'
-              WHEN event_type IN ('verify', 'verify_email') THEN 'otp_verify'
-            END AS category,
-            TRUE AS is_attempt,
-            outcome = 'failure' AS is_failure)
-        ]
+        WHEN 'otp_requested' THEN
+          CASE
+            WHEN event_type IN ('verify', 'verify_email') THEN [
+              STRUCT('otp_verify' AS category, TRUE AS is_attempt, outcome = 'failure' AS is_failure)
+            ]
+            WHEN is_fallback_handoff THEN [
+              STRUCT('otp_request_firebase_handoff' AS category, TRUE AS is_attempt, TRUE AS is_failure)
+            ]
+            WHEN event_type IN ('request', 'request_email') THEN [
+              STRUCT('otp_request' AS category, TRUE AS is_attempt, outcome = 'failure' AS is_failure),
+              STRUCT(
+                CASE method
+                  WHEN 'firebase' THEN 'otp_request_firebase'
+                  WHEN 'personal_id' THEN 'otp_request_personalid'
+                  WHEN 'email' THEN 'otp_request_email'
+                END,
+                TRUE,
+                outcome = 'failure'),
+              STRUCT(IF(method = 'firebase', 'otp_request_firebase_handoff', NULL), TRUE, FALSE)
+            ]
+            ELSE []
+          END
         WHEN 'personalid_account_recovered' THEN [STRUCT('personalid_recovery' AS category, TRUE AS is_attempt, int_value = 0 AS is_failure)]
         WHEN 'ccc_api_jobs' THEN [STRUCT('connect_api_jobs' AS category, TRUE AS is_attempt, api_success = 0 AS is_failure)]
         WHEN 'ccc_api_start_learning' THEN [STRUCT('connect_api_start_learning' AS category, TRUE AS is_attempt, api_success = 0 AS is_failure)]

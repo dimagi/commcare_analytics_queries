@@ -56,7 +56,9 @@ Crashlytics days come from its `event_timestamp`, as in the other folders.
 `all_events`, `session_start`, `screen_view`, `first_open`, `app_update` and
 `app_exception` count events. `app_exception` also counts every event as a failure. The
 rest are the failure categories of `mobile/release_health/release_health_ga4_failures.sql`,
-with the same rules; its README explains them. Keep the two lists in step when the app
+with the same rules; its README explains them. That includes leaving the Firebase OTP
+handoffs out of `otp_request` and splitting it by method, with the handoff window fixed at
+the release health default of 120 seconds. Keep the two lists in step when the app
 changes an event.
 
 ## What these cannot tell

@@ -48,6 +48,7 @@ crashes AS (
     c.issue_title,
     c.error_type,
     c.installation_uuid,
+    NULLIF(c.firebase_session_id, '') AS session_id,
     (SELECT k.value FROM UNNEST(c.custom_keys) k WHERE k.key = 'device_id') AS device_id,
     IFNULL((SELECT k.value FROM UNNEST(c.custom_keys) k WHERE k.key = 'device_id'), c.installation_uuid) AS device_key,
     (SELECT k.value FROM UNNEST(c.custom_keys) k WHERE k.key = 'domain') AS domain,
@@ -69,6 +70,7 @@ dimension_counts AS (
     COUNT(DISTINCT c.device_key) AS devices,
     COUNT(*) AS events,
     COUNT(DISTINCT c.installation_uuid) AS installations,
+    COUNT(DISTINCT IF(c.session_id IS NOT NULL, c.installation_uuid, NULL)) AS session_installations,
     COUNT(DISTINCT c.event_date) AS days_with_events,
     MAX(c.event_date) AS last_event_date,
     COUNT(DISTINCT c.domain) AS domains
@@ -101,6 +103,7 @@ per_issue AS (
     IFNULL(MAX(IF(dimension = 'all', devices, NULL)), 0) AS devices,
     IFNULL(MAX(IF(dimension = 'all', events, NULL)), 0) AS events,
     IFNULL(MAX(IF(dimension = 'all', installations, NULL)), 0) AS installations,
+    IFNULL(MAX(IF(dimension = 'all', session_installations, NULL)), 0) AS session_installations,
     IFNULL(MAX(IF(dimension = 'segment' AND value = 'connect', devices, NULL)), 0) AS connect_devices,
     IFNULL(MAX(IF(dimension = 'segment' AND value = 'connect-demo', devices, NULL)), 0) AS connect_demo_devices,
     IFNULL(MAX(IF(dimension = 'segment' AND value = 'non-connect', devices, NULL)), 0) AS non_connect_devices,

@@ -43,7 +43,8 @@ type.
 | `ranking` | `all`, ranked by `devices`, or `connect`, ranked by `connect_devices` over the issues that reached a Connect device |
 | `issue_rank` | 1 for the issue on the most devices. Ties go to more events, then to `issue_id` |
 | `issue_id`, `error_type`, `issue_title` | the Crashlytics issue. `error_type` is `FATAL` (a crash) or `ANR` |
-| `devices`, `events`, `installations` | distinct devices, events and Crashlytics installations over the window. Both run higher than the console's user count, up to 2.7x (see Checking it) |
+| `devices`, `events`, `installations` | distinct devices, events and Crashlytics installations over the window. `devices` is the true count and can run well above the console's issue-level users (see Checking it) |
+| `session_installations` | installations whose events carry a Firebase session id, which means CommCare 2.64.0 and later (Crashlytics SDK 19.x). When it is above 0, it is roughly what the console shows as the issue's users |
 | `connect_devices`, `connect_demo_devices`, `non_connect_devices` | `devices` by segment. They add up to `devices` |
 | `unmatched_devices` | of `non_connect_devices`, those GA4 never saw over the window |
 | `connect_events` | events on Connect devices, the tie-break for the Connect ranking |
@@ -96,19 +97,27 @@ console by `issue_id` for its stack and events.
 
 ## Cost
 
-About 520 MB for a 7 day window, and 1.4 GB for 30 days: the window and the one before
+About 530 MB for a 7 day window, and 1.5 GB for 30 days: the window and the one before
 it, plus `issue_id`, `error_type` and `event_timestamp` for the whole export, to find
 `first_seen_date`.
 
 `first_seen` reads the export through the wildcard `org_commcare_dalvik_ANDROID*` (only
 that table matches). Named directly, BigQuery merges it with the window's read of the same
-table, and reads `custom_keys` for all 90 days: 1.76 GB instead of 520 MB.
+table, and reads `custom_keys` for all 90 days: 1.76 GB instead of 530 MB.
 
 ## Checking it
 
-Checked on 2026-11-05 against the Crashlytics API's top issues for 2026-10-28 to 11-03,
-CommCare app, all versions, crashes only. Events match the console: two of the top five
-exactly, the other three within 7%. Devices and installations do not: they run 1.1x to
-2.7x above the console's users (ExtUtil.readString: 80 installations, 30 users), and
-distinct `user.id` in the export is close to installations too, so that isn't the cause.
-Until the gap is explained, read `devices` as a ranking, not as the console's user count.
+Checked against the Crashlytics API's top issues for 2026-10-28 to 11-03, CommCare app,
+crashes only. Events match the console, all eight of the top eight within 1.
+
+Users don't, and the console is the partial one. Once an issue has any event from
+CommCare 2.64.0 or later (Crashlytics SDK 19.x, the first with Firebase Sessions), the
+console's issue-level users count only the users on those versions. Users on 2.50-2.63
+carry no session id and drop out. ExtUtil.readString (5c8720f9): 87 installations, 35 of
+them on 2.64+, and the console shows 30. Its per-version users add up to 85, and
+filtered to six old versions alone it shows 37, more than its unfiltered total. An issue
+with no 2.64+ events at all matches exactly (CursorWindow.getBlob_native: 34 and 34).
+
+So `devices` is the real number of affected devices. To compare with the console, use
+`session_installations`, which runs 0-5 above it (the console likely counts only
+sessions that started in the window), or the console's per-version breakdown.

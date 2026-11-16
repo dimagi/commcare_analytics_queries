@@ -56,8 +56,14 @@ def test_load_good(tmp_path):
     assert entries[A]["checked_on"] == date(2026, 10, 28)
 
 
+def test_load_older_issue_id(tmp_path):
+    older = "c" * 24
+    assert list(ki.load(write_list(tmp_path, GOOD.replace(A, older)))) == [older]
+
+
 @pytest.mark.parametrize("change, message", [
     (('issue_id = "%s"' % A, 'issue_id = "XYZ"'), "32 lowercase hex"),
+    (('issue_id = "%s"' % A, 'issue_id = "%s"' % ("a" * 28)), "32 lowercase hex"),
     (('reason = "old"\n', ""), "missing reason"),
     (("checked_on = 2026-10-28", 'checked_on = "last week"'), "TOML date"),
     (('checked_release = "2.65.0"', 'checked_release = "2.65.0-beta"'), "checked_release"),

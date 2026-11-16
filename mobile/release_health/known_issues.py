@@ -15,7 +15,7 @@ from pathlib import Path
 
 DEFAULT_LIST = Path(__file__).with_name("known_issues.toml")
 STALE_AFTER_RELEASES = 2
-ISSUE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+ISSUE_ID_RE = re.compile(r"^(?:[0-9a-f]{24}|[0-9a-f]{32})$")
 VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+)*$")
 PR_RE = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/pull/[0-9]+$")
 ERROR_TYPES = ("FATAL", "ANR", "NON_FATAL")
@@ -56,7 +56,7 @@ def _check_entry(n, e):
         if e.get(f) in (None, ""):
             raise ListError("%s: missing %s" % (where, f))
     if not ISSUE_ID_RE.fullmatch(e["issue_id"]):
-        raise ListError("%s: issue_id must be 32 lowercase hex characters" % where)
+        raise ListError("%s: issue_id must be 32 lowercase hex characters, or 24 for an older issue" % where)
     if not isinstance(e["checked_on"], date):
         raise ListError("%s: checked_on must be a TOML date, like 2026-10-28" % where)
     if e.get("error_type") is not None and e["error_type"] not in ERROR_TYPES:

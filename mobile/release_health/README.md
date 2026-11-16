@@ -97,7 +97,7 @@ list, and entries carry over from release to release. Each `[[issue]]` holds:
 
 | Field | Required | Meaning |
 |---|---|---|
-| `issue_id` | yes | the Crashlytics issue id, 32 hex characters, as in the console URL and the issues query |
+| `issue_id` | yes | the Crashlytics issue id, 32 hex characters (24 for an older issue), as in the console URL and the issues query |
 | `title` | yes | a short name for people; nothing matches on it |
 | `reason` | yes | why it is not a regression, with the evidence |
 | `checked_on` | yes | the day it was last checked, a TOML date (`2026-10-28`, no quotes) |

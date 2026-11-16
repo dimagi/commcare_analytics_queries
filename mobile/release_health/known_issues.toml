@@ -97,3 +97,12 @@ error_type = "FATAL"
 reason = "First seen 2.63.4, and 3 release devices against 3 on the baseline. CommCareActivity changed in 2.65 only by making a field private final."
 checked_on = 2026-11-02
 checked_release = "2.65.0"
+
+[[issue]]
+issue_id = "59bb98cabe077a4dcca8f444"
+title = "ExtUtil.java line 92 OutOfMemoryError writing a large fixture during sync"
+error_type = "FATAL"
+projects = ["fundacion-plan"]
+reason = "fundacion-plan's fixture outgrew device memory: IndexedFixtureXmlParser.commitToNormalStorage runs out of memory in HybridFileBackedSqlStorage on every version. 29 of the 33 2.65.0 release devices with it were in fundacion-plan, all from 2026-11-06 on, and the project's devices on 2.64.1, 2.62.0 and 2.61.5 hit it on 2026-11-07 too. Leaving fundacion-plan out brought the same-device crash ratio from 1.18x to 1.10x. Neither ExtUtil nor IndexedFixtureXmlParser changed between commcare_2.64.1 and commcare_2.65.0. No fix ticket; filing one was declined on 2026-11-11."
+checked_on = 2026-11-10
+checked_release = "2.65.0"

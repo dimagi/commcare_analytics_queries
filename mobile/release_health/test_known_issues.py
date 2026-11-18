@@ -101,6 +101,14 @@ def test_in_scope_matches_project_and_model_loosely():
     assert ki.in_scope(entry(), None, None)
 
 
+def test_in_scope_reads_the_project_out_of_the_domain_key():
+    e = entry(projects=["fundacion-plan"])
+    assert ki.in_scope(e, "fundacion-plan.commcarehq.org", "SM-A175F")
+    assert ki.in_scope(e, "fundacion-plan.india.commcarehq.org", "SM-A175F")
+    assert not ki.in_scope(e, "fundacion-plan-2.commcarehq.org", "SM-A175F")
+    assert not ki.in_scope(e, None, "SM-A175F")
+
+
 def test_unscoped_entry_is_exempt():
     [t] = ki.tag([row(scopes=[("x", "m", "y", 4, 2)])], {A: entry()}, "2.65.0")
     assert t["exempt"] and t["out_of_scope_devices"] == 0

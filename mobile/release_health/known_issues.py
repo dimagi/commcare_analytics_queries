@@ -47,6 +47,11 @@ def normalize(s):
     return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
 
+def project_of(domain):
+    """The CommCare project in a Crashlytics domain key, which carries the server too: fundacion-plan.commcarehq.org."""
+    return normalize((domain or "").split(".")[0])
+
+
 def _check_entry(n, e):
     where = "entry %d (%s)" % (n, e.get("issue_id", "no issue_id"))
     unknown = set(e) - set(REQUIRED) - set(OPTIONAL)
@@ -102,8 +107,8 @@ def scoped(entry):
 
 def in_scope(entry, domain, model, manufacturer=None):
     """Whether one release device falls under the entry: in a listed project and of a listed model, where given."""
-    projects = {normalize(p) for p in entry.get("projects", [])}
-    if projects and normalize(domain) not in projects:
+    projects = {project_of(p) for p in entry.get("projects", [])}
+    if projects and project_of(domain) not in projects:
         return False
     models = {normalize(m) for m in entry.get("device_models", [])}
     if models and not models & {normalize(model), normalize((manufacturer or "") + (model or ""))}:

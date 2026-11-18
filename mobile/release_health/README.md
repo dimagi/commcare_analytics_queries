@@ -112,8 +112,10 @@ list, and entries carry over from release to release. Each `[[issue]]` holds:
 **Scope.** With neither `projects` nor `device_models`, an entry covers every device.
 With both, a device must match both. Matching ignores case, spaces and punctuation, and
 a model matches either `device.model` or the manufacturer and model together, so
-`Tecno BF6` matches a `TECNO BF6` model and a `BF6` model made by `TECNO`. A device whose
-report carries no `domain` is outside any entry that lists projects.
+`Tecno BF6` matches a `TECNO BF6` model and a `BF6` model made by `TECNO`. The `domain`
+key carries the server too (`fundacion-plan.commcarehq.org`), so only the part before its
+first dot is matched against `projects`. A device whose report carries no `domain` is
+outside any entry that lists projects.
 
 **What it does to a report.** `known_issues.py` tags each issues row the list holds:
 

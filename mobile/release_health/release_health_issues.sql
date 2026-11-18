@@ -24,7 +24,10 @@ WITH events AS (
     event_timestamp,
     DATE(event_timestamp) AS event_date,
     application.display_version AS app_version,
-    IFNULL((SELECT k.value FROM UNNEST(custom_keys) k WHERE k.key = 'device_id'), installation_uuid) AS device_key
+    IFNULL((SELECT k.value FROM UNNEST(custom_keys) k WHERE k.key = 'device_id'), installation_uuid) AS device_key,
+    (SELECT k.value FROM UNNEST(custom_keys) k WHERE k.key = 'domain') AS domain,
+    device.manufacturer AS device_manufacturer,
+    device.model AS device_model
   FROM `commcare-a57e4.firebase_crashlytics.org_commcare_dalvik_ANDROID`
   WHERE DATE(event_timestamp) <= end_date
 ),
@@ -57,24 +60,56 @@ other_version_devices AS (
   WHERE NOT ENDS_WITH(IFNULL(app_version, ''), release_version)
 ),
 
-fresh AS (
-  SELECT r.issue_id, COUNT(*) AS release_devices_fresh
+-- One row per release device and issue: the project and model of its latest release
+-- event, and whether it is fresh. The known-issues list checks these against each
+-- entry's scope.
+release_device_rows AS (
+  SELECT
+    r.issue_id,
+    r.device_key,
+    r.domain,
+    r.device_manufacturer,
+    r.device_model,
+    o.device_key IS NULL AS fresh
   FROM (
-    SELECT DISTINCT issue_id, device_key
+    SELECT
+      issue_id,
+      device_key,
+      ARRAY_AGG(STRUCT(domain, device_manufacturer, device_model) ORDER BY event_timestamp DESC LIMIT 1)[OFFSET(0)].*
     FROM events
     WHERE app_version = release_version AND event_date >= release_start AND device_key IS NOT NULL
+    GROUP BY issue_id, device_key
   ) r
   LEFT JOIN other_version_devices o USING (issue_id, device_key)
-  WHERE o.device_key IS NULL
-  GROUP BY r.issue_id
+),
+
+scopes AS (
+  SELECT
+    issue_id,
+    SUM(fresh_devices) AS release_devices_fresh,
+    ARRAY_AGG(STRUCT(domain, device_manufacturer, device_model, devices, fresh_devices)
+              ORDER BY devices DESC, domain, device_model) AS release_scopes
+  FROM (
+    SELECT
+      issue_id,
+      domain,
+      device_manufacturer,
+      device_model,
+      COUNT(*) AS devices,
+      COUNTIF(fresh) AS fresh_devices
+    FROM release_device_rows
+    GROUP BY issue_id, domain, device_manufacturer, device_model
+  )
+  GROUP BY issue_id
 )
 
 SELECT
   p.*,
   IFNULL(f.release_devices_fresh, 0) AS release_devices_fresh,
+  IFNULL(f.release_scopes, []) AS release_scopes,
   release_start,
   end_date
 FROM per_issue p
-LEFT JOIN fresh f USING (issue_id)
+LEFT JOIN scopes f USING (issue_id)
 WHERE release_events > 0
 ORDER BY release_devices DESC, release_events DESC;

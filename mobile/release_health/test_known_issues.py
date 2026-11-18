@@ -1,6 +1,8 @@
 """Tests for known_issues.py. Run with `python -m pytest mobile/release_health`."""
 import json
+import re
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -172,3 +174,33 @@ def test_cli_validate_reports_errors(tmp_path, capsys):
     assert ki.main(["--validate", "--list", str(write_list(tmp_path, GOOD))]) == 0
     assert ki.main(["--validate", "--list", str(write_list(tmp_path, GOOD + GOOD))]) == 1
     assert "listed twice" in capsys.readouterr().err
+
+
+def test_sql_entries_normalize_names_as_in_scope_does():
+    e = entry(projects=["Fundacion-Plan", "fundacion-plan.commcarehq.org"], device_models=["Tecno BF6"])
+    assert ki.sql_entries({A: e, B: entry(issue_id=B)}) == [
+        {"issue_id": A, "projects": ["fundacionplan"], "device_models": ["tecnobf6"]},
+        {"issue_id": B, "projects": [], "device_models": []},
+    ]
+
+
+def test_sql_literal_is_a_quoted_json_string():
+    lit = ki.sql_literal({A: entry(projects=["proj-a"])})
+    assert lit.startswith("'") and lit.endswith("'")
+    assert json.loads(lit[1:-1]) == [{"issue_id": A, "projects": ["proja"], "device_models": []}]
+
+
+def test_sql_literal_escapes_quotes_and_backslashes(monkeypatch):
+    monkeypatch.setattr(ki, "sql_entries", lambda entries: [{"issue_id": "it's\\"}])
+    assert ki.sql_literal({}) == r"""'[{"issue_id":"it\'s\\\\"}]'"""
+
+
+def test_upgraders_query_declares_the_list_once():
+    sql = (Path(ki.__file__).with_name("release_health_upgraders.sql")).read_text(encoding="utf-8")
+    assert len(re.findall(r"^DECLARE\s+known_issues_json\s+STRING\s+DEFAULT\s+'\[\]';$", sql, re.M)) == 1
+    assert "crash_device_days_ex_known" in sql and "anr_device_days_ex_known" in sql
+
+
+def test_cli_sql_literal(tmp_path, capsys):
+    assert ki.main(["--sql-literal", "--list", str(write_list(tmp_path, GOOD))]) == 0
+    assert json.loads(capsys.readouterr().out.strip()[1:-1])[0]["projects"] == ["proja"]

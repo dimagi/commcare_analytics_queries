@@ -2,6 +2,7 @@
 
     python known_issues.py <issues.json> --release 2.65.0 [--list known_issues.toml] [--json]
     python known_issues.py --validate [--list known_issues.toml]
+    python known_issues.py --sql-literal [--list known_issues.toml]
 
 The rows are the JSON array bq prints for the issues query. Exits 1 when the list is invalid.
 """
@@ -131,6 +132,20 @@ def out_of_scope(entry, row):
     return devices, fresh
 
 
+def sql_entries(entries):
+    """The list as release_health_upgraders.sql reads it: ids and scopes, with names already normalized."""
+    return [{"issue_id": e["issue_id"],
+             "projects": sorted({project_of(p) for p in e.get("projects", [])}),
+             "device_models": sorted({normalize(m) for m in e.get("device_models", [])})}
+            for e in entries.values()]
+
+
+def sql_literal(entries):
+    """A SQL string literal holding sql_entries as JSON, for the known_issues_json DECLARE."""
+    text = json.dumps(sql_entries(entries), separators=(",", ":"))
+    return "'%s'" % text.replace("\\", "\\\\").replace("'", "\\'")
+
+
 def flags(entry, release_version):
     """The recheck flags an entry carries on a release, whether or not the issue shows on it."""
     since = releases_between(entry["checked_release"], release_version)
@@ -223,11 +238,16 @@ def main(argv=None):
     ap.add_argument("--list", default=str(DEFAULT_LIST))
     ap.add_argument("--json", action="store_true", help="print the tags as JSON instead of markdown")
     ap.add_argument("--validate", action="store_true", help="only check the list")
+    ap.add_argument("--sql-literal", action="store_true",
+                    help="print the list as the known_issues_json default for release_health_upgraders.sql")
     a = ap.parse_args(argv)
     try:
         entries = load(a.list)
         if a.validate:
             print("%s: %d entries, valid" % (a.list, len(entries)))
+            return 0
+        if a.sql_literal:
+            print(sql_literal(entries))
             return 0
         if not a.issues or not a.release:
             ap.error("give issues.json and --release, or --validate")

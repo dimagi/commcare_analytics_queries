@@ -15,7 +15,7 @@ days old, which is why this is separate.
 | File | What it returns |
 |---|---|
 | `release_health_daily.sql` | one row per day x version (release or baseline) x segment: device-days and the device-days, events and so on for crashes, ANRs and non-fatals |
-| `release_health_upgraders.sql` | the same counts for devices that upgraded, before and after their own upgrade, and for devices that stayed on the baseline, before and after the rollout started |
+| `release_health_upgraders.sql` | the same counts for devices that upgraded, before and after their own upgrade, and for devices that stayed on the baseline, before and after the rollout started, plus the crash and ANR device-days again without the known issues (`*_ex_known`) |
 | `release_health_issues.sql` | one row per Crashlytics issue seen on the release since the rollout started: devices and events on the release and the baseline, beta events, events on any other version in the export, and the release devices by project and model (`release_scopes`) |
 | `release_health_ga4_failures.sql` | one row per day x version x segment x failure category, from release_start on: device-days, attempts and the device-days with one, failures and the device-days with one, for the failures the app reports to GA4 |
 | `release_health_versions.sql` | devices per day x version x segment for every version, and distinct devices per version over the last `week_days` days (grain `week`); a NULL `app_version` row counts each device once across all versions. Same device definition as the daily query, with release days before release_start left out |
@@ -36,6 +36,7 @@ Each file opens with the same `DECLARE` block:
 | `release_start` | the day the store rollout started. Required: beta testers report the same version name before it, and no device count reliably tells them apart (2.64.1's betas reached 150 devices a day) |
 | `data_lag_days` | how far `end_date` sits behind today. The Crashlytics export lands a day or two late |
 | `pre_release_days` | how far before `release_start` the window opens, for the before half of the upgraders check |
+| `known_issues_json` | upgraders query only: the known-issues list, as `python known_issues.py --sql-literal` prints it. The file's default is `'[]'`, an empty list, so in the console the `*_ex_known` columns equal the others unless you paste the list in |
 
 The skill's runner rewrites these defaults. In the console, edit them by hand. From a
 shell, pipe the file to bq on stdin, because a file opening with `--` reads as a flag:
@@ -71,6 +72,11 @@ baseline and then the release; their before days are baseline days before their 
 release day. `stayed` devices ran the baseline throughout; their before and after split at
 `release_start`. Only devices with days in both periods count. Dividing the upgraded
 ratio by the stayed ratio cancels whatever changed for everyone over those weeks.
+
+`crash_device_days_ex_known` and `anr_device_days_ex_known` count the same device-days
+again, leaving out the crashes and ANRs of issues in `known_issues.toml` when the event's
+project and model fall inside the entry's scope. A device-day whose only crash was a known
+one counts as crash-free there. The rates report shows the same-device check both ways.
 
 **New issues** are issues with no events on any version other than the release in the whole
 Crashlytics export, about 90 days. Spellings that end in the release version, like
@@ -131,14 +137,21 @@ outside any entry that lists projects.
 - **Still showing on or after its fix release** (`past_expected_fix`) when the issue has
   events on `expected_fix_release` or later.
 
+The same-device check reads the list too. The upgraders query counts crash and ANR
+device-days a second time without the listed issues, each event judged by its own project
+and model against the entry's scope, so the rates report can show the check with and
+without known issues.
+
 ```
 python known_issues.py --validate
 python known_issues.py <issues.json> --release 2.65.0 [--json]
+python known_issues.py --sql-literal
 ```
 
 The first checks the list after an edit. The second takes the issues query's rows as bq
 prints them in JSON and prints the tags as a markdown table, or as JSON for a report to
-read. `python -m pytest mobile/release_health` runs the tests.
+read. The third prints the list as the `known_issues_json` default for the upgraders
+query: issue ids and scopes, with the names already normalized. `python -m pytest mobile/release_health` runs the tests.
 
 **Keeping it current.** Add an entry when a release check finds an issue that is not a
 regression, with the evidence in `reason`. When you check it again on a later release,

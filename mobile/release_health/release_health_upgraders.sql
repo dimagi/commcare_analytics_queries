@@ -7,6 +7,9 @@ DECLARE baseline_version STRING DEFAULT '2.64.1';
 DECLARE release_start DATE DEFAULT DATE '2026-10-20';
 DECLARE data_lag_days INT64 DEFAULT 2;
 DECLARE pre_release_days INT64 DEFAULT 14;
+-- The known-issues list as JSON, from `python known_issues.py --sql-literal`. Events of a
+-- listed issue inside its scope are left out of the *_ex_known columns only.
+DECLARE known_issues_json STRING DEFAULT '[]';
 DECLARE end_date DATE DEFAULT DATE_SUB(CURRENT_DATE(), INTERVAL data_lag_days DAY);
 DECLARE start_date DATE;
 
@@ -37,6 +40,14 @@ WITH demo_devices AS (
     )
 ),
 
+known AS (
+  SELECT
+    JSON_VALUE(k, '$.issue_id') AS issue_id,
+    ARRAY(SELECT JSON_VALUE(p, '$') FROM UNNEST(JSON_QUERY_ARRAY(k, '$.projects')) p) AS projects,
+    ARRAY(SELECT JSON_VALUE(m, '$') FROM UNNEST(JSON_QUERY_ARRAY(k, '$.device_models')) m) AS device_models
+  FROM UNNEST(JSON_QUERY_ARRAY(known_issues_json)) k
+),
+
 ga AS (
   SELECT event_date, device_id, app_version, is_connect
   FROM `commcare-a57e4.mobile_metrics.ga_device_day`
@@ -56,17 +67,42 @@ segments AS (
   GROUP BY device_id
 ),
 
+-- Scope matching as in known_issues.py: the project is the domain key up to its first dot,
+-- names keep lowercase letters and digits only, and a model matches device.model or the
+-- manufacturer and model together.
+crash_events AS (
+  SELECT
+    DATE(e.event_timestamp) AS event_date,
+    IFNULL((SELECT c.value FROM UNNEST(e.custom_keys) c WHERE c.key = 'device_id'), e.installation_uuid) AS device_key,
+    e.application.display_version AS app_version,
+    e.error_type,
+    IFNULL(
+      k.issue_id IS NOT NULL
+      AND (ARRAY_LENGTH(k.projects) = 0
+           OR REGEXP_REPLACE(LOWER(SPLIT(IFNULL((SELECT c.value FROM UNNEST(e.custom_keys) c WHERE c.key = 'domain'), ''), '.')[SAFE_OFFSET(0)]),
+                             r'[^a-z0-9]', '') IN UNNEST(k.projects))
+      AND (ARRAY_LENGTH(k.device_models) = 0
+           OR REGEXP_REPLACE(LOWER(IFNULL(e.device.model, '')), r'[^a-z0-9]', '') IN UNNEST(k.device_models)
+           OR REGEXP_REPLACE(LOWER(CONCAT(IFNULL(e.device.manufacturer, ''), IFNULL(e.device.model, ''))),
+                             r'[^a-z0-9]', '') IN UNNEST(k.device_models)),
+      FALSE) AS known
+  FROM `commcare-a57e4.firebase_crashlytics.org_commcare_dalvik_ANDROID` e
+  LEFT JOIN known k ON k.issue_id = e.issue_id
+  WHERE DATE(e.event_timestamp) BETWEEN start_date AND end_date
+    AND e.application.display_version IN (release_version, baseline_version)
+),
+
 crash_device_days AS (
   SELECT
-    DATE(event_timestamp) AS event_date,
-    IFNULL((SELECT k.value FROM UNNEST(custom_keys) k WHERE k.key = 'device_id'), installation_uuid) AS device_key,
-    application.display_version AS app_version,
+    event_date,
+    device_key,
+    app_version,
     COUNTIF(error_type = 'FATAL') AS crash_events,
     COUNTIF(error_type = 'ANR') AS anr_events,
-    COUNTIF(error_type = 'NON_FATAL') AS nonfatal_events
-  FROM `commcare-a57e4.firebase_crashlytics.org_commcare_dalvik_ANDROID`
-  WHERE DATE(event_timestamp) BETWEEN start_date AND end_date
-    AND application.display_version IN (release_version, baseline_version)
+    COUNTIF(error_type = 'NON_FATAL') AS nonfatal_events,
+    COUNTIF(error_type = 'FATAL' AND NOT known) AS crash_events_ex_known,
+    COUNTIF(error_type = 'ANR' AND NOT known) AS anr_events_ex_known
+  FROM crash_events
   GROUP BY event_date, device_key, app_version
 ),
 
@@ -77,16 +113,20 @@ device_days AS (
     app_version,
     SUM(crash_events) AS crash_events,
     SUM(anr_events) AS anr_events,
-    SUM(nonfatal_events) AS nonfatal_events
+    SUM(nonfatal_events) AS nonfatal_events,
+    SUM(crash_events_ex_known) AS crash_events_ex_known,
+    SUM(anr_events_ex_known) AS anr_events_ex_known
   FROM (
     SELECT DISTINCT event_date, device_id AS device_key, app_version,
-           0 AS crash_events, 0 AS anr_events, 0 AS nonfatal_events
+           0 AS crash_events, 0 AS anr_events, 0 AS nonfatal_events,
+           0 AS crash_events_ex_known, 0 AS anr_events_ex_known
     FROM ga
     WHERE app_version IN (release_version, baseline_version)
 
     UNION ALL
 
-    SELECT event_date, device_key, app_version, crash_events, anr_events, nonfatal_events
+    SELECT event_date, device_key, app_version, crash_events, anr_events, nonfatal_events,
+           crash_events_ex_known, anr_events_ex_known
     FROM crash_device_days
   )
   GROUP BY event_date, device_key, app_version
@@ -138,6 +178,8 @@ SELECT
   SUM(p.anr_events) AS anr_events,
   COUNTIF(p.nonfatal_events > 0) AS nonfatal_device_days,
   SUM(p.nonfatal_events) AS nonfatal_events,
+  COUNTIF(p.crash_events_ex_known > 0) AS crash_device_days_ex_known,
+  COUNTIF(p.anr_events_ex_known > 0) AS anr_device_days_ex_known,
   release_start,
   end_date
 FROM paired p

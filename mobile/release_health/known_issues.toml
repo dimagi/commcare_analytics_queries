@@ -39,6 +39,15 @@ checked_on = 2026-10-28
 checked_release = "2.65.0"
 
 [[issue]]
+issue_id = "db682e519ec29a6a20e5c9e88026f7b1"
+title = "PersonalIdApiHandler.handleErrorCodeIfPresent: user has no backup code set"
+error_type = "FATAL"
+reason = "An old crash under a new name. PersonalIdBackupCodeFragment's confirm-backup-code onFailure passes NO_RECOVERY_PIN_SET to PersonalIdOrConnectApiErrorHandler, whose default branch throws, in 2.64.1 too; the class moved packages in 2.65, so Crashlytics files it as a new issue. Tracked as CI-1047."
+same_as = "PersonalIdApiHandler.handleErrorCodeIfPresent in org.commcare.connect.network.connectId (2.64.1 and earlier)"
+checked_on = 2026-11-20
+checked_release = "2.65.0"
+
+[[issue]]
 issue_id = "975ee064c9dae904871356692091fd3b"
 title = "SqlStorage.getMetaDataForRecord ANR"
 error_type = "ANR"

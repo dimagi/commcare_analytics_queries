@@ -22,11 +22,17 @@ found in GA4 finds its crashes.
 | `user_devices.sql` | `user_cid`, `start_date`, `end_date` | one row per device the user was seen on: the same counts for the user's own events, how many other PersonalID users used the device (`is_shared_device`), events with nobody logged in, and whether the device was still used after the user's last day on it |
 | `user_activity.sql` | `user_cid`, `start_date`, `end_date` | one row per day x device x version x category for the user's own events: `events`, and `attempts` and `failures` where the category has them |
 | `user_crashes.sql` | `device_ids`, `user_cid`, `start_date`, `end_date` | one row per Crashlytics issue and error type on those devices: events, devices, days with events, first and last day, versions, and how many events carried the user's id or someone else's as the Crashlytics user id |
+| `crashlytics_user_devices.sql` | `user_cid`, `start_date`, `end_date` | one row per device whose Crashlytics events carried the user's id as the Crashlytics user id: events, first and last day |
 
 The usual order is `device_users` (or start from a known `user_cid`), then
 `user_devices`, then `user_activity` and `user_crashes` with the device ids
 `user_devices` returned. `user_crashes` takes the device ids rather than looking them up
 again, because the lookup is the expensive part.
+
+When `user_devices` returns nothing for a user, `crashlytics_user_devices` is the cheap
+next step before a wider GA4 window: it finds the devices that crashed while the user was
+logged in to PersonalID with no CommCare user logged in. Finding nothing is weak evidence,
+because while a CommCare user is logged in the Crashlytics user id is the CommCare username.
 
 ## Inputs
 
@@ -80,4 +86,5 @@ changes an event.
 The GA4 queries read `user_properties`, the most expensive column of the export, for every
 day in the window, whichever user is asked about: the export is not clustered, so a filter
 on one user saves nothing. Keep the window as short as the question allows.
-`user_crashes.sql` reads only a few Crashlytics columns.
+`user_crashes.sql` and `crashlytics_user_devices.sql` read only a few Crashlytics columns;
+the latter reads about 0.6 GB for 90 days.
